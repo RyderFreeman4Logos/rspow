@@ -1,1 +1,5 @@
 /target
+
+# 忽略本地设计文档
+design_docs/
+AGENTS.md
