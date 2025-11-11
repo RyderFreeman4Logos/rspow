@@ -14,12 +14,13 @@ A simple multi-algorithm proof-of-work library for Rust.
 - [x] RIPEMD-320
 - [x] Scrypt
 - [x] Argon2id
+- [x] Equihash (validate any `(n, k)`; bundled solver for `(200, 9)`)
 
 API references are available at [docs.rs/rspow](https://docs.rs/rspow).
 
 ## Difficulty Modes
 
-RSPOW supports two difficulty modes:
+RSPOW supports three difficulty modes:
 
 - AsciiZeroPrefix (default): the hash must start with `difficulty` bytes of ASCII `'0'` (`0x30`).
   - Expected attempts grow by ~256 per additional byte.
@@ -27,10 +28,14 @@ RSPOW supports two difficulty modes:
 - LeadingZeroBits: the hash must have at least `difficulty` leading zero bits.
   - Expected attempts ≈ `2^difficulty`.
   - Fine-grained control suitable for tuning across a wide range.
+- EquihashSolutionHash: BLAKE2b of `(data || nonce || solution)` must have `difficulty` leading zero bits.
+  - Keeps Equihash’s structural hardness through `(n, k)` while giving per-instance tuning.
 
 Notes:
 - `PoW::calculate_target()` returns the ASCII `'0'` prefix and is meaningful only for `AsciiZeroPrefix`.
 - In `LeadingZeroBits` mode, the `target` slice is ignored; pass an empty slice for clarity.
+- Equihash always operates in `EquihashSolutionHash` mode; the `target` slice is ignored.
+- `PoW::calculate_pow` / `PoW::verify_pow` return `Result`, surfacing configuration issues (e.g., mismatched modes or unavailable Equihash solver).
 
 ## Examples
 
@@ -45,9 +50,9 @@ let algorithm = PoWAlgorithm::Sha2_512;
 let pow = PoW::new(data, difficulty, algorithm).unwrap();
 
 let target = pow.calculate_target(); // [0x30; difficulty]
-let (hash, nonce) = pow.calculate_pow(&target);
+let (hash, nonce) = pow.calculate_pow(&target).unwrap();
 assert!(hash.starts_with(&target[..difficulty]));
-assert!(pow.verify_pow(&target, (hash, nonce)));
+assert!(pow.verify_pow(&target, (hash, nonce)).unwrap());
 ```
 
 ### Leading zero bits (fine-grained)
@@ -60,9 +65,9 @@ let bits = 12; // expected attempts ~ 2^12 = 4096
 let algorithm = PoWAlgorithm::Sha2_256;
 let pow = PoW::with_mode(data, bits, algorithm, DifficultyMode::LeadingZeroBits).unwrap();
 
-let (hash, nonce) = pow.calculate_pow(&[]); // target is ignored in bits mode
+let (hash, nonce) = pow.calculate_pow(&[]).unwrap(); // target is ignored in bits mode
 assert!(rspow::meets_leading_zero_bits(&hash, bits as u32));
-assert!(pow.verify_pow(&[], (hash, nonce)));
+assert!(pow.verify_pow(&[], (hash, nonce)).unwrap());
 ```
 
 ### Argon2id with custom parameters
@@ -78,8 +83,9 @@ let algorithm = PoWAlgorithm::Argon2id(params);
 // Prefer LeadingZeroBits for smoother tuning with memory-hard functions
 let bits = 8; // expected attempts ~ 256
 let pow = PoW::with_mode(data, bits, algorithm, DifficultyMode::LeadingZeroBits).unwrap();
-let (hash, nonce) = pow.calculate_pow(&[]);
+let (hash, nonce) = pow.calculate_pow(&[]).unwrap();
 assert!(rspow::meets_leading_zero_bits(&hash, bits as u32));
+assert!(pow.verify_pow(&[], (hash, nonce)).unwrap());
 ```
 
 ## Benchmarking

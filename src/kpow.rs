@@ -203,8 +203,12 @@ impl KPow {
     pub fn verify_proof(&self, proof: &KProof) -> bool {
         let puzzles = self.derive_puzzles(proof.index + 1);
         let data = puzzles[proof.index];
-        let hash =
-            PoWAlgorithm::Argon2id(self.params.clone()).calculate(&data, proof.nonce as usize);
+        let hash = match PoWAlgorithm::Argon2id(self.params.clone())
+            .calculate(&data, proof.nonce as usize)
+        {
+            Ok(h) => h,
+            Err(_) => return false,
+        };
         let mut h32 = [0u8; 32];
         h32.copy_from_slice(&hash);
         h32 == proof.hash && meets_leading_zero_bits(&hash, self.bits)
@@ -272,8 +276,9 @@ impl KPow {
         for (idx, data) in puzzles.into_iter().enumerate() {
             let mut nonce: u64 = 0;
             loop {
-                let hash =
-                    PoWAlgorithm::Argon2id(self.params.clone()).calculate(&data, nonce as usize);
+                let hash = PoWAlgorithm::Argon2id(self.params.clone())
+                    .calculate(&data, nonce as usize)
+                    .map_err(|e| e.to_string())?;
                 if with_stats {
                     total_tries += 1;
                 }
@@ -345,6 +350,7 @@ impl KPow {
         let stop = Arc::new(AtomicBool::new(false));
         let successes = Arc::new(AtomicUsize::new(0));
         let total_tries_atomic = Arc::new(AtomicU64::new(0));
+        let error_msg: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         let start = if with_stats {
             Some(Instant::now())
         } else {
@@ -360,11 +366,12 @@ impl KPow {
             let stop_flag = stop.clone();
             let successes_ctr = successes.clone();
             let tries_ctr = total_tries_atomic.clone();
+            let error_slot = error_msg.clone();
             let k_local = k;
             let bits_local = bits;
             let j = thread::spawn(move || {
                 let mut cursor = t_id % k_local;
-                loop {
+                'worker: loop {
                     if stop_flag.load(Ordering::Relaxed) {
                         break;
                     }
@@ -383,8 +390,20 @@ impl KPow {
                             continue;
                         }
                         let data = puzzles[idx];
-                        let hash =
-                            PoWAlgorithm::Argon2id(params.clone()).calculate(&data, n as usize);
+                        let hash = match PoWAlgorithm::Argon2id(params.clone())
+                            .calculate(&data, n as usize)
+                        {
+                            Ok(h) => h,
+                            Err(e) => {
+                                stop_flag.store(true, Ordering::SeqCst);
+                                if let Ok(mut slot) = error_slot.lock() {
+                                    if slot.is_none() {
+                                        *slot = Some(e.to_string());
+                                    }
+                                }
+                                break 'worker;
+                            }
+                        };
                         tries_ctr.fetch_add(1, Ordering::Relaxed);
                         if meets_leading_zero_bits(&hash, bits_local)
                             && !a.done.swap(true, Ordering::SeqCst)
@@ -418,7 +437,15 @@ impl KPow {
         }
 
         for j in joins {
-            let _ = j.join();
+            if j.join().is_err() {
+                return Err("worker thread panicked".to_owned());
+            }
+        }
+
+        if let Ok(mut guard) = error_msg.lock() {
+            if let Some(msg) = guard.take() {
+                return Err(msg);
+            }
         }
 
         let mut proofs: Vec<KProof> = Vec::with_capacity(k);

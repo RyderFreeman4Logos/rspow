@@ -3,10 +3,12 @@
 //! Supported algorithms:
 //! - SHA-256, SHA-512, RIPEMD-320
 //! - Scrypt, Argon2id (with custom `Params`)
+//! - Equihash (verification for any valid `(n, k)`, built-in solver for `(200, 9)`)
 //!
 //! Difficulty modes:
 //! - `AsciiZeroPrefix` (default): hash must start with `difficulty` bytes of ASCII '0' (0x30).
 //! - `LeadingZeroBits`: hash must have at least `difficulty` leading zero bits (big-endian within bytes).
+//! - `EquihashSolutionHash`: Equihash solutions must hash (BLAKE2b) to `difficulty` leading zero bits.
 //!
 //! Quick examples:
 //!
@@ -17,7 +19,7 @@
 //! let algorithm = PoWAlgorithm::Sha2_256;
 //! let pow = PoW::new(data, 2, algorithm).unwrap();
 //! let target = pow.calculate_target();
-//! let (_hash, _nonce) = pow.calculate_pow(&target);
+//! let (_hash, _nonce) = pow.calculate_pow(&target).unwrap();
 //! ```
 //!
 //! ```rust
@@ -25,13 +27,15 @@
 //!
 //! let data = "hello";
 //! let pow = PoW::with_mode(data, 10, PoWAlgorithm::Sha2_256, DifficultyMode::LeadingZeroBits).unwrap();
-//! let (_hash, _nonce) = pow.calculate_pow(&[]); // target ignored in bits mode
+//! let (_hash, _nonce) = pow.calculate_pow(&[]).unwrap(); // target ignored in bits mode
 //! ```
 //!
 use argon2::{Algorithm, Argon2, Version};
+use blake2b_simd::Params as Blake2bParams;
 use ripemd::Ripemd320;
 use serde::{ser::SerializeStruct, Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha512};
+use std::fmt;
 
 pub use argon2::Params as Argon2Params;
 pub use scrypt::Params as ScryptParams;
@@ -265,7 +269,9 @@ pub mod bench {
         loop {
             let nonce_usize = usize::try_from(nonce)
                 .map_err(|_| "nonce exceeds usize::MAX on this platform".to_owned())?;
-            let hash = algorithm.calculate(data, nonce_usize);
+            let hash = algorithm
+                .calculate(data, nonce_usize)
+                .map_err(|e| e.to_string())?;
             tries = tries
                 .checked_add(1)
                 .ok_or_else(|| "tries overflow".to_owned())?;
@@ -413,6 +419,89 @@ pub mod bench {
     }
 }
 
+/// Errors that can occur while computing Proofs of Work.
+#[derive(Debug)]
+pub enum PoWError {
+    /// Requested Equihash parameters are unsupported by the bundled solver.
+    EquihashSolverUnavailable { n: u32, k: u32 },
+    /// Algorithm/mode combination is invalid (e.g., Equihash with ASCII mode).
+    InvalidModeCombination {
+        algorithm: &'static str,
+        mode: &'static str,
+    },
+}
+
+impl fmt::Display for PoWError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PoWError::EquihashSolverUnavailable { n, k } => write!(
+                f,
+                "Equihash solver unavailable for parameters (n={}, k={}); supply a supported solver",
+                n, k
+            ),
+            PoWError::InvalidModeCombination { algorithm, mode } => write!(
+                f,
+                "invalid PoW configuration: algorithm {} cannot be paired with mode {}",
+                algorithm, mode
+            ),
+        }
+    }
+}
+
+impl std::error::Error for PoWError {}
+
+impl From<PoWError> for String {
+    fn from(err: PoWError) -> Self {
+        err.to_string()
+    }
+}
+
+/// Parameters controlling the Equihash algorithm (n, k).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct EquihashParams {
+    n: u32,
+    k: u32,
+}
+
+impl EquihashParams {
+    /// Construct Equihash parameters after validating spec constraints.
+    pub fn new(n: u32, k: u32) -> Result<Self, String> {
+        if n % 8 != 0 {
+            return Err("Equihash requires n to be a multiple of 8".to_owned());
+        }
+        if k < 3 {
+            return Err("Equihash requires k >= 3".to_owned());
+        }
+        if k >= n {
+            return Err("Equihash requires k < n".to_owned());
+        }
+        if n % (k + 1) != 0 {
+            return Err("Equihash requires n % (k + 1) == 0".to_owned());
+        }
+        Ok(Self { n, k })
+    }
+
+    /// Convenience constructor for the common Zcash (200, 9) parameter set.
+    pub fn zcash_200_9() -> Self {
+        Self { n: 200, k: 9 }
+    }
+
+    /// Return n.
+    pub fn n(&self) -> u32 {
+        self.n
+    }
+
+    /// Return k.
+    pub fn k(&self) -> u32 {
+        self.k
+    }
+
+    /// Whether the bundled Tromp solver can be used for these params.
+    pub fn supports_tromp_solver(&self) -> bool {
+        self.n == 200 && self.k == 9
+    }
+}
+
 /// Enum defining different Proof of Work (PoW) algorithms.
 #[allow(non_camel_case_types)]
 #[derive(Clone, Debug)]
@@ -422,6 +511,7 @@ pub enum PoWAlgorithm {
     RIPEMD_320,
     Scrypt(ScryptParams),
     Argon2id(Argon2Params),
+    Equihash(EquihashParams),
 }
 
 impl PoWAlgorithm {
@@ -481,13 +571,31 @@ impl PoWAlgorithm {
     }
 
     /// Calculates hash based on the selected algorithm.
-    pub fn calculate(&self, data: &[u8], nonce: usize) -> Vec<u8> {
-        match self {
+    pub fn calculate(&self, data: &[u8], nonce: usize) -> Result<Vec<u8>, PoWError> {
+        let hash = match self {
             Self::Sha2_256 => Self::calculate_sha2_256(data, nonce),
             Self::Sha2_512 => Self::calculate_sha2_512(data, nonce),
             Self::RIPEMD_320 => Self::calculate_ripemd_320(data, nonce),
             Self::Scrypt(params) => Self::calculate_scrypt(data, nonce, params),
             Self::Argon2id(params) => Self::calculate_argon2id(data, nonce, params),
+            Self::Equihash(params) => {
+                return Err(PoWError::EquihashSolverUnavailable {
+                    n: params.n(),
+                    k: params.k(),
+                })
+            }
+        };
+        Ok(hash)
+    }
+
+    fn variant_name(&self) -> &'static str {
+        match self {
+            Self::Sha2_256 => "Sha2_256",
+            Self::Sha2_512 => "Sha2_512",
+            Self::RIPEMD_320 => "RIPEMD_320",
+            Self::Scrypt(_) => "Scrypt",
+            Self::Argon2id(_) => "Argon2id",
+            Self::Equihash(_) => "Equihash",
         }
     }
 }
@@ -536,6 +644,18 @@ pub enum DifficultyMode {
     AsciiZeroPrefix,
     /// New mode: require a given number of leading zero bits.
     LeadingZeroBits,
+    /// Equihash mode: BLAKE2b(data || nonce || solution) must hit difficulty bits.
+    EquihashSolutionHash,
+}
+
+impl DifficultyMode {
+    fn variant_name(&self) -> &'static str {
+        match self {
+            DifficultyMode::AsciiZeroPrefix => "AsciiZeroPrefix",
+            DifficultyMode::LeadingZeroBits => "LeadingZeroBits",
+            DifficultyMode::EquihashSolutionHash => "EquihashSolutionHash",
+        }
+    }
 }
 
 /// Struct representing Proof of Work (PoW) with data, difficulty, and algorithm.
@@ -555,6 +675,7 @@ impl PartialEq for DifficultyMode {
             (self, other),
             (Self::AsciiZeroPrefix, Self::AsciiZeroPrefix)
                 | (Self::LeadingZeroBits, Self::LeadingZeroBits)
+                | (Self::EquihashSolutionHash, Self::EquihashSolutionHash)
         )
     }
 }
@@ -564,6 +685,7 @@ impl std::hash::Hash for DifficultyMode {
         match self {
             DifficultyMode::AsciiZeroPrefix => 0u8.hash(state),
             DifficultyMode::LeadingZeroBits => 1u8.hash(state),
+            DifficultyMode::EquihashSolutionHash => 2u8.hash(state),
         }
     }
 }
@@ -579,6 +701,7 @@ impl PartialEq for PoWAlgorithm {
             (Argon2id(a), Argon2id(b)) => {
                 a.m_cost() == b.m_cost() && a.t_cost() == b.t_cost() && a.p_cost() == b.p_cost()
             }
+            (Equihash(a), Equihash(b)) => a == b,
             _ => false,
         }
     }
@@ -602,6 +725,11 @@ impl std::hash::Hash for PoWAlgorithm {
                 p.m_cost().hash(state);
                 p.t_cost().hash(state);
                 p.p_cost().hash(state);
+            }
+            Equihash(params) => {
+                5u8.hash(state);
+                params.n().hash(state);
+                params.k().hash(state);
             }
         }
     }
@@ -638,6 +766,9 @@ impl Serialize for DifficultyMode {
         match self {
             DifficultyMode::AsciiZeroPrefix => serializer.serialize_str("AsciiZeroPrefix"),
             DifficultyMode::LeadingZeroBits => serializer.serialize_str("LeadingZeroBits"),
+            DifficultyMode::EquihashSolutionHash => {
+                serializer.serialize_str("EquihashSolutionHash")
+            }
         }
     }
 }
@@ -651,9 +782,10 @@ impl<'de> Deserialize<'de> for DifficultyMode {
         match s.as_str() {
             "AsciiZeroPrefix" => Ok(DifficultyMode::AsciiZeroPrefix),
             "LeadingZeroBits" => Ok(DifficultyMode::LeadingZeroBits),
+            "EquihashSolutionHash" => Ok(DifficultyMode::EquihashSolutionHash),
             other => Err(serde::de::Error::unknown_variant(
                 other,
-                &["AsciiZeroPrefix", "LeadingZeroBits"],
+                &["AsciiZeroPrefix", "LeadingZeroBits", "EquihashSolutionHash"],
             )),
         }
     }
@@ -701,6 +833,17 @@ impl Serialize for PoWAlgorithm {
                 st.serialize_field("Argon2id", &wrapper)?;
                 st.end()
             }
+            Equihash(p) => {
+                #[derive(Serialize)]
+                struct EquihashParamsSer {
+                    n: u32,
+                    k: u32,
+                }
+                let wrapper = EquihashParamsSer { n: p.n(), k: p.k() };
+                let mut st = serializer.serialize_struct("Equihash", 1)?;
+                st.serialize_field("Equihash", &wrapper)?;
+                st.end()
+            }
         }
     }
 }
@@ -730,7 +873,14 @@ impl<'de> Deserialize<'de> for PoWAlgorithm {
                     "RIPEMD_320" => Ok(PoWAlgorithm::RIPEMD_320),
                     _ => Err(E::unknown_variant(
                         v,
-                        &["Sha2_256", "Sha2_512", "RIPEMD_320", "Scrypt", "Argon2id"],
+                        &[
+                            "Sha2_256",
+                            "Sha2_512",
+                            "RIPEMD_320",
+                            "Scrypt",
+                            "Argon2id",
+                            "Equihash",
+                        ],
                     )),
                 }
             }
@@ -766,7 +916,21 @@ impl<'de> Deserialize<'de> for PoWAlgorithm {
                                 .map_err(|e| A::Error::custom(e.to_string()))?;
                             Ok(PoWAlgorithm::Argon2id(params))
                         }
-                        other => Err(A::Error::unknown_field(other, &["Scrypt", "Argon2id"])),
+                        "Equihash" => {
+                            #[derive(Deserialize)]
+                            struct EquihashParamsDe {
+                                n: u32,
+                                k: u32,
+                            }
+                            let p = map.next_value::<EquihashParamsDe>()?;
+                            let params = EquihashParams::new(p.n, p.k)
+                                .map_err(|e| A::Error::custom(e.to_string()))?;
+                            Ok(PoWAlgorithm::Equihash(params))
+                        }
+                        other => Err(A::Error::unknown_field(
+                            other,
+                            &["Scrypt", "Argon2id", "Equihash"],
+                        )),
                     }
                 } else {
                     Err(A::Error::custom("empty map for PoWAlgorithm"))
@@ -821,11 +985,17 @@ impl PoW {
         difficulty: usize,
         algorithm: PoWAlgorithm,
     ) -> Result<Self, String> {
+        let default_mode = if matches!(&algorithm, PoWAlgorithm::Equihash(_)) {
+            DifficultyMode::EquihashSolutionHash
+        } else {
+            DifficultyMode::AsciiZeroPrefix
+        };
+        Self::ensure_mode_compatibility(&algorithm, default_mode)?;
         Ok(PoW {
             data: serde_json::to_vec(&data).unwrap(),
             difficulty,
             algorithm,
-            mode: DifficultyMode::AsciiZeroPrefix,
+            mode: default_mode,
         })
     }
 
@@ -836,12 +1006,29 @@ impl PoW {
         algorithm: PoWAlgorithm,
         mode: DifficultyMode,
     ) -> Result<Self, String> {
+        Self::ensure_mode_compatibility(&algorithm, mode)?;
         Ok(PoW {
             data: serde_json::to_vec(&data).unwrap(),
             difficulty,
             algorithm,
             mode,
         })
+    }
+
+    fn ensure_mode_compatibility(
+        algorithm: &PoWAlgorithm,
+        mode: DifficultyMode,
+    ) -> Result<(), String> {
+        match (algorithm, mode) {
+            (PoWAlgorithm::Equihash(_), DifficultyMode::EquihashSolutionHash) => Ok(()),
+            (PoWAlgorithm::Equihash(_), _) => Err(
+                "Equihash requires DifficultyMode::EquihashSolutionHash for correctness".to_owned(),
+            ),
+            (_, DifficultyMode::EquihashSolutionHash) => Err(
+                "DifficultyMode::EquihashSolutionHash can only be paired with Equihash".to_owned(),
+            ),
+            _ => Ok(()),
+        }
     }
 
     /// Calculates the target of ASCII '0' bytes based on difficulty.
@@ -855,21 +1042,39 @@ impl PoW {
     /// Calculates PoW with the given target hash.
     /// For `AsciiZeroPrefix`, the `target` must be the ASCII '0' prefix of length `difficulty`.
     /// For `LeadingZeroBits`, `target` is ignored; `difficulty` is interpreted as bit count.
-    pub fn calculate_pow(&self, target: &[u8]) -> (Vec<u8>, usize) {
+    pub fn calculate_pow(&self, target: &[u8]) -> Result<(Vec<u8>, usize), PoWError> {
+        if let (PoWAlgorithm::Equihash(params), DifficultyMode::EquihashSolutionHash) =
+            (&self.algorithm, self.mode)
+        {
+            return self.calculate_equihash_pow(params);
+        }
+        if matches!(&self.algorithm, PoWAlgorithm::Equihash(_)) {
+            return Err(PoWError::InvalidModeCombination {
+                algorithm: self.algorithm.variant_name(),
+                mode: self.mode.variant_name(),
+            });
+        }
+
         let mut nonce = 0;
 
         loop {
-            let hash = self.algorithm.calculate(&self.data, nonce);
+            let hash = self.algorithm.calculate(&self.data, nonce)?;
             match self.mode {
                 DifficultyMode::AsciiZeroPrefix => {
                     if &hash[..target.len()] == target {
-                        return (hash, nonce);
+                        return Ok((hash, nonce));
                     }
                 }
                 DifficultyMode::LeadingZeroBits => {
                     if meets_leading_zero_bits(&hash, self.difficulty as u32) {
-                        return (hash, nonce);
+                        return Ok((hash, nonce));
                     }
+                }
+                DifficultyMode::EquihashSolutionHash => {
+                    return Err(PoWError::InvalidModeCombination {
+                        algorithm: self.algorithm.variant_name(),
+                        mode: self.mode.variant_name(),
+                    })
                 }
             }
             nonce += 1;
@@ -877,27 +1082,111 @@ impl PoW {
     }
 
     /// Verifies PoW with the given target hash and PoW result.
-    pub fn verify_pow(&self, target: &[u8], pow_result: (Vec<u8>, usize)) -> bool {
+    pub fn verify_pow(
+        &self,
+        target: &[u8],
+        pow_result: (Vec<u8>, usize),
+    ) -> Result<bool, PoWError> {
+        if let (PoWAlgorithm::Equihash(params), DifficultyMode::EquihashSolutionHash) =
+            (&self.algorithm, self.mode)
+        {
+            return Ok(self.verify_equihash_pow(params, pow_result));
+        }
+        if matches!(&self.algorithm, PoWAlgorithm::Equihash(_)) {
+            return Err(PoWError::InvalidModeCombination {
+                algorithm: self.algorithm.variant_name(),
+                mode: self.mode.variant_name(),
+            });
+        }
+
         let (hash, nonce) = pow_result;
 
-        let calculated_hash = self.algorithm.calculate(&self.data, nonce);
-        match self.mode {
+        let calculated_hash = self.algorithm.calculate(&self.data, nonce)?;
+        let result = match self.mode {
             DifficultyMode::AsciiZeroPrefix => {
-                if &calculated_hash[..target.len()] == target && calculated_hash == hash {
-                    return true;
-                }
-                false
+                &calculated_hash[..target.len()] == target && calculated_hash == hash
             }
             DifficultyMode::LeadingZeroBits => {
-                if meets_leading_zero_bits(&calculated_hash, self.difficulty as u32)
+                meets_leading_zero_bits(&calculated_hash, self.difficulty as u32)
                     && calculated_hash == hash
-                {
-                    return true;
+            }
+            DifficultyMode::EquihashSolutionHash => {
+                return Err(PoWError::InvalidModeCombination {
+                    algorithm: self.algorithm.variant_name(),
+                    mode: self.mode.variant_name(),
+                })
+            }
+        };
+        Ok(result)
+    }
+
+    fn calculate_equihash_pow(
+        &self,
+        params: &EquihashParams,
+    ) -> Result<(Vec<u8>, usize), PoWError> {
+        if !params.supports_tromp_solver() {
+            return Err(PoWError::EquihashSolverUnavailable {
+                n: params.n(),
+                k: params.k(),
+            });
+        }
+
+        let mut counter: usize = 0;
+        loop {
+            let mut local_counter = counter;
+            let mut last_nonce = None;
+            let solutions = equihash::tromp::solve_200_9(&self.data, || -> Option<[u8; 32]> {
+                if local_counter == usize::MAX {
+                    return None;
                 }
-                false
+                let nonce_bytes = equihash_nonce_from_counter(local_counter);
+                last_nonce = Some((nonce_bytes, local_counter));
+                local_counter = local_counter.saturating_add(1);
+                Some(nonce_bytes)
+            });
+            counter = local_counter;
+            if solutions.is_empty() {
+                continue;
+            }
+            let (nonce_bytes, nonce_counter) = match last_nonce {
+                Some(value) => value,
+                None => continue,
+            };
+            for solution in solutions {
+                let digest = equihash_solution_hash(&self.data, &nonce_bytes, &solution);
+                if meets_leading_zero_bits(&digest, self.difficulty as u32) {
+                    return Ok((solution, nonce_counter));
+                }
             }
         }
     }
+
+    fn verify_equihash_pow(&self, params: &EquihashParams, pow_result: (Vec<u8>, usize)) -> bool {
+        let (solution, nonce_counter) = pow_result;
+        let nonce_bytes = equihash_nonce_from_counter(nonce_counter);
+        if equihash::is_valid_solution(params.n(), params.k(), &self.data, &nonce_bytes, &solution)
+            .is_err()
+        {
+            return false;
+        }
+        let digest = equihash_solution_hash(&self.data, &nonce_bytes, &solution);
+        meets_leading_zero_bits(&digest, self.difficulty as u32)
+    }
+}
+
+fn equihash_nonce_from_counter(counter: usize) -> [u8; 32] {
+    let mut bytes = [0u8; 32];
+    let le = counter.to_le_bytes();
+    bytes[..le.len()].copy_from_slice(&le);
+    bytes
+}
+
+fn equihash_solution_hash(data: &[u8], nonce: &[u8], solution: &[u8]) -> Vec<u8> {
+    let mut state = Blake2bParams::new().hash_length(32).to_state();
+    state.update(data);
+    state.update(nonce);
+    state.update(solution);
+    state.finalize().as_bytes().to_vec()
 }
 
 #[cfg(test)]
@@ -953,7 +1242,7 @@ mod tests {
     fn test_pow_algorithm_dispatch_ripemd_320() {
         let data = b"hello world";
         let nonce = 12345;
-        let via_dispatch = PoWAlgorithm::RIPEMD_320.calculate(data, nonce);
+        let via_dispatch = PoWAlgorithm::RIPEMD_320.calculate(data, nonce).unwrap();
         let direct = PoWAlgorithm::calculate_ripemd_320(data, nonce);
         assert_eq!(via_dispatch, direct);
     }
@@ -995,11 +1284,11 @@ mod tests {
         let algorithm = PoWAlgorithm::Sha2_512;
         let pow = PoW::new(data, difficulty, algorithm).unwrap();
 
-        let (hash, nonce) = pow.calculate_pow(&target);
+        let (hash, nonce) = pow.calculate_pow(&target).unwrap();
 
         assert!(hash.starts_with(&target[..difficulty]));
 
-        assert!(pow.verify_pow(&target, (hash.clone(), nonce)));
+        assert!(pow.verify_pow(&target, (hash.clone(), nonce)).unwrap());
     }
 
     #[test]
@@ -1011,9 +1300,32 @@ mod tests {
         let pow = PoW::with_mode(data, bits, algorithm, DifficultyMode::LeadingZeroBits).unwrap();
 
         // target is ignored for bits mode; pass empty slice for clarity.
-        let (hash, nonce) = pow.calculate_pow(&[]);
+        let (hash, nonce) = pow.calculate_pow(&[]).unwrap();
         assert!(meets_leading_zero_bits(&hash, bits as u32));
-        assert!(pow.verify_pow(&[], (hash, nonce)));
+        assert!(pow.verify_pow(&[], (hash, nonce)).unwrap());
+    }
+
+    #[test]
+    fn test_equihash_params_validation() {
+        assert!(EquihashParams::new(200, 9).is_ok());
+        assert!(EquihashParams::new(201, 9).is_err());
+        assert!(EquihashParams::new(200, 2).is_err());
+    }
+
+    #[test]
+    #[ignore = "takes several seconds due to Tromp solver run"]
+    fn test_equihash_pow_roundtrip() {
+        let algorithm = PoWAlgorithm::Equihash(EquihashParams::zcash_200_9());
+        let pow = PoW::with_mode(
+            "equihash",
+            2,
+            algorithm,
+            DifficultyMode::EquihashSolutionHash,
+        )
+        .unwrap();
+
+        let (solution, nonce) = pow.calculate_pow(&[]).unwrap();
+        assert!(pow.verify_pow(&[], (solution.clone(), nonce)).unwrap());
     }
 
     // -------- 按比特前缀判定工具函数测试 --------
