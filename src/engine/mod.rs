@@ -1,18 +1,31 @@
+//! 核心引擎模块
+//! Core engine module
+//!
+//! 本模块实现了主要的 EquiX 工作量证明引擎 (EquixEngine)。
+//! 它负责协调多线程求解、管理任务分配以及处理恢复逻辑。
+
 use crate::core::derive_challenge;
 use crate::error::Error;
 use crate::stream::{NonceSource, StopFlag};
 use crate::types::{Proof, ProofBundle, ProofConfig};
 use blake3::hash as blake3_hash;
-use derive_builder::Builder;
+use derive_builder::Builder; // 使用 Builder 模式宏，简化复杂结构体的构建
 use equix as equix_crate;
-use flume::{Receiver, Sender, TrySendError};
+use flume::{Receiver, Sender, TrySendError}; // 高性能的多生产者多消费者通道
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 
+/// PoW 引擎特征 (Trait)。
+/// 定义了所有 PoW 引擎必须实现的标准接口。
 pub trait PowEngine {
+    /// 解决一个新的证明包。
+    /// 给定主挑战，从头开始计算所需的证明。
     fn solve_bundle(&mut self, master_challenge: [u8; 32]) -> Result<ProofBundle, Error>;
+    
+    /// 恢复一个已有的证明包。
+    /// 在已有的证明基础上继续计算，直到达到新的 required_proofs 数量。
     fn resume(
         &mut self,
         existing: ProofBundle,
@@ -20,19 +33,37 @@ pub trait PowEngine {
     ) -> Result<ProofBundle, Error>;
 }
 
+/// EquiX 算法引擎结构体。
+///
+/// 使用 `derive_builder` 自动生成 Builder 模式代码，
+/// 允许用户以流畅的方式配置参数 (例如 `.bits(4).threads(8).build()`).
 #[derive(Builder, Debug)]
-#[builder(pattern = "owned")]
+#[builder(pattern = "owned")] // Builder 消费自身所有权，返回构建好的对象
 pub struct EquixEngine {
+    /// 目标难度：哈希所需的前导零位数。
     pub bits: u32,
+    
+    /// 并行计算使用的线程数。
     pub threads: usize,
+    
+    /// 需要生成的证明总数。
     pub required_proofs: usize,
+    
+    /// 进度计数器 (原子操作)。
+    /// 用于向外部报告当前已找到的证明数量。
     pub progress: Arc<AtomicU64>,
 }
 
+/// 证明结果类型别名，方便书写。
 type ProofResult = Result<Proof, Error>;
+
+/// 求解器函数类型别名。
+/// 这是一个闭包或函数指针，接受挑战和难度，返回可能的解。
+/// `Send + Sync` 标记是必须的，因为它将在多线程间共享。
 type Solver = dyn Fn([u8; 32], u32) -> Result<Option<[u8; 16]>, Error> + Send + Sync;
 
 impl EquixEngine {
+    /// 验证引擎配置参数的有效性。
     fn validate(&self) -> Result<(), Error> {
         if self.bits == 0 {
             return Err(Error::InvalidConfig("bits must be > 0".into()));
@@ -47,7 +78,10 @@ impl EquixEngine {
     }
 }
 
+// 扩展自动生成的 Builder，添加额外的验证逻辑
 impl EquixEngineBuilder {
+    /// 验证构建器中的参数。
+    /// 处理 Option 类型，因为在 build 之前某些字段可能未设置。
     fn validate(&self) -> Result<(), Error> {
         if self.bits.unwrap_or(0) == 0 {
             return Err(Error::InvalidConfig("bits must be > 0".into()));
@@ -64,6 +98,8 @@ impl EquixEngineBuilder {
         Ok(())
     }
 
+    /// 构建并验证引擎实例。
+    /// 相比默认的 `build()`，这个方法提供了更友好的错误处理。
     pub fn build_validated(self) -> Result<EquixEngine, Error> {
         self.validate()?;
         self.build()
@@ -72,25 +108,32 @@ impl EquixEngineBuilder {
 }
 
 impl PowEngine for EquixEngine {
+    /// 实现 `solve_bundle`：从零开始生成证明包。
     fn solve_bundle(&mut self, master_challenge: [u8; 32]) -> Result<ProofBundle, Error> {
         self.validate()?;
+        
+        // 重置进度计数器
         self.progress.store(0, Ordering::SeqCst);
+        
         let mut bundle = ProofBundle {
             proofs: Vec::new(),
             config: ProofConfig { bits: self.bits },
             master_challenge,
         };
 
+        // 调用核心求解逻辑 solve_range
+        // 从 nonce 0 开始，当前已有 0 个证明，目标是 self.required_proofs
         let new_proofs = solve_range(
             master_challenge,
             self.bits,
             self.threads,
-            0,
-            0,
+            0, // start_nonce
+            0, // current_len
             self.required_proofs,
             self.progress.clone(),
         )?;
 
+        // 将找到的证明插入 bundle
         for proof in new_proofs {
             bundle
                 .insert_proof(proof)
@@ -100,30 +143,45 @@ impl PowEngine for EquixEngine {
         Ok(bundle)
     }
 
+    /// 实现 `resume`：在现有证明包基础上继续计算。
     fn resume(
         &mut self,
         mut existing: ProofBundle,
         required_proofs: usize,
     ) -> Result<ProofBundle, Error> {
         self.validate()?;
+        
+        // 检查配置一致性：继续挖掘的难度必须与原包一致
         if existing.config.bits != self.bits {
             return Err(Error::InvalidConfig(
                 "bundle difficulty does not match engine".into(),
             ));
         }
+        
+        // 验证现有包的有效性，防止基于坏数据继续工作
         existing
             .verify_strict()
             .map_err(|e| Error::SolverFailed(e.to_string()))?;
+            
+        // 检查目标数量是否合理
         if required_proofs < existing.len() {
             return Err(Error::InvalidConfig(
                 "required_proofs must be >= existing proofs".into(),
             ));
         }
+        
+        // 更新引擎的目标和进度
         self.required_proofs = required_proofs;
         self.progress.store(existing.len() as u64, Ordering::SeqCst);
+        
+        // 如果已经满足要求，直接返回
         if existing.len() >= required_proofs {
             return Ok(existing);
         }
+        
+        // 计算起始 nonce：
+        // 为了避免重复工作，我们查找现有证明中最大的 ID，从它 + 1 开始。
+        // 如果没有证明，则从现有的数量开始（这是一个启发式选择，只要不重复即可）。
         let start_nonce = existing
             .proofs
             .iter()
@@ -131,6 +189,8 @@ impl PowEngine for EquixEngine {
             .max()
             .map(|m| m.saturating_add(1))
             .unwrap_or(existing.len() as u64);
+            
+        // 调用核心求解逻辑
         let new_proofs = solve_range(
             existing.master_challenge,
             self.bits,
@@ -141,6 +201,7 @@ impl PowEngine for EquixEngine {
             self.progress.clone(),
         )?;
 
+        // 合并新证明
         for proof in new_proofs {
             existing
                 .insert_proof(proof)
@@ -150,6 +211,7 @@ impl PowEngine for EquixEngine {
     }
 }
 
+/// 辅助函数：使用默认的 `solve_single` 求解器启动范围求解。
 #[allow(clippy::too_many_arguments)]
 fn solve_range(
     master_challenge: [u8; 32],
@@ -168,10 +230,16 @@ fn solve_range(
         current_len,
         target_total,
         progress,
+        // 将 solve_single 函数包装为 Arc 共享闭包
         Arc::new(solve_single as fn([u8; 32], u32) -> Result<Option<[u8; 16]>, Error>),
     )
 }
 
+/// 核心并行求解逻辑。
+///
+/// 架构：Master-Worker 模式 (或者说生产者-消费者模式的变体)
+/// - 主线程：负责收集结果，监控进度，并在完成时通知所有线程停止。
+/// - Worker线程：并行地从 NonceSource 获取 ID，计算，并发送结果回主线程。
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn solve_range_with(
     master_challenge: [u8; 32],
@@ -183,6 +251,7 @@ fn solve_range_with(
     progress: Arc<AtomicU64>,
     solver: Arc<Solver>,
 ) -> Result<Vec<Proof>, Error> {
+    // 再次检查目标数量
     if current_len > target_total {
         return Err(Error::InvalidConfig(
             "current proof count exceeds required proofs".into(),
@@ -194,17 +263,24 @@ fn solve_range_with(
         return Ok(Vec::new());
     }
 
+    // 初始化并发原语
     let nonce_source = Arc::new(NonceSource::new(start_nonce));
     let stop = Arc::new(StopFlag::new());
+    
+    // 创建通信通道 (Channel)
+    // 缓冲区大小设为线程数的 2 倍，既保证吞吐量又防止内存积压
     let bound = (threads.max(1) * 2).max(1);
     let (tx, rx): (Sender<ProofResult>, Receiver<ProofResult>) = flume::bounded(bound);
+    
     let mut joins = Vec::with_capacity(threads.max(1));
 
+    // 启动 Worker 线程
     for _ in 0..threads.max(1) {
         let worker_nonce = nonce_source.clone();
         let worker_stop = stop.clone();
         let worker_tx = tx.clone();
         let worker_solver = solver.clone();
+        
         let join = thread::spawn(move || {
             worker_loop(
                 master_challenge,
@@ -217,43 +293,64 @@ fn solve_range_with(
         });
         joins.push(join);
     }
+    
+    // 必须丢弃主线程持有的发送端 (tx)，否则如果所有 worker 都退出了，
+    // 接收端 (rx) 永远不会知道通道已关闭 (EOF)，导致死锁。
     drop(tx);
 
     let mut proofs = Vec::with_capacity(needed);
     let mut seen = HashSet::with_capacity(needed * 2 + 1);
 
+    // 主循环：收集结果
     while proofs.len() < needed {
         match rx.recv() {
             Ok(Ok(proof)) => {
+                // 收到成功证明
+                // 去重检查 (尽管 NonceSource 保证了 ID 唯一，但作为防御性编程)
                 if !seen.insert(proof.id) {
                     continue;
                 }
                 proofs.push(proof);
+                
+                // 更新进度
                 let current = progress.fetch_add(1, Ordering::SeqCst) + 1;
+                
+                // 如果已达到目标，向所有线程发出停止信号
                 if current >= target_total as u64 {
                     stop.force_stop();
                 }
             }
             Ok(Err(err)) => {
+                // 收到 Worker 报错 (例如 EquiX 内部错误)
+                // 立即停止所有工作并返回错误
                 stop.force_stop();
                 join_handles(joins);
                 return Err(err);
             }
-            Err(_) => break,
+            Err(_) => {
+                // 通道已关闭 (所有发送端都 drop 了)
+                // 这通常意味着所有 worker 都意外退出了，停止循环。
+                break;
+            }
         }
     }
 
+    // 清理工作：确保所有线程都已退出
     stop.force_stop();
     join_handles(joins);
 
+    // 最终检查：是否收集到了足够的证明？
     if proofs.len() < needed {
         return Err(Error::ChannelClosed);
     }
 
+    // 结果排序
     proofs.sort_by_key(|p| p.id);
     Ok(proofs)
 }
 
+/// Worker 线程的主循环。
+/// 不断获取 nonce，计算，发送结果，直到收到停止信号。
 fn worker_loop(
     master_challenge: [u8; 32],
     bits: u32,
@@ -263,30 +360,45 @@ fn worker_loop(
     solver: Arc<Solver>,
 ) {
     while !stop.should_stop() {
+        // 1. 获取任务 (Nonce)
         let id = nonce_source.fetch();
+        
+        // 2. 准备上下文
         let challenge = derive_challenge(master_challenge, id);
+        
+        // 3. 执行求解
         match solver(challenge, bits) {
             Ok(Some(solution)) => {
+                // 找到解了！构建 Proof 对象
                 let proof = Proof {
                     id,
                     challenge,
                     solution,
                 };
+                
+                // 尝试发送结果
                 match tx.try_send(Ok(proof)) {
-                    Ok(()) => {}
+                    Ok(()) => {} // 发送成功
                     Err(TrySendError::Full(_)) => {
-                        // drop hit under backpressure
+                        // 通道已满。
+                        // 在这种情况下，我们选择丢弃这个解而不是阻塞。
+                        // 为什么？因为这是一种背压 (Backpressure) 机制。
+                        // 如果主线程处理不过来，worker 应该减速或者丢弃工作，而不是耗尽内存。
+                        // 注意：这可能会导致通过 `id` 顺序产生空洞，但对于 PoW 来说是可以接受的。
                     }
                     Err(TrySendError::Disconnected(_)) => {
+                        // 接收端已关闭，说明主线程可能已经退出了。
                         stop.force_stop();
                         break;
                     }
                 }
             }
             Ok(None) => {
+                // 此 nonce 没有解，继续下一个。
                 continue;
             }
             Err(err) => {
+                // 发生严重错误，发送错误信息并通知停止。
                 let _ = tx.send(Err(err));
                 stop.force_stop();
                 break;
@@ -295,27 +407,41 @@ fn worker_loop(
     }
 }
 
+/// 等待所有线程结束 (Join)。
 fn join_handles(joins: Vec<thread::JoinHandle<()>>) {
     for handle in joins {
         let _ = handle.join();
     }
 }
 
+/// 单次求解函数。
+/// 执行 EquiX 求解并检查难度。
 fn solve_single(challenge: [u8; 32], bits: u32) -> Result<Option<[u8; 16]>, Error> {
+    // 初始化 EquiX 实例
     let equix =
         equix_crate::EquiX::new(&challenge).map_err(|err| Error::SolverFailed(err.to_string()))?;
+    
+    // 求解 EquiX 难题
     let solutions = equix.solve();
+    
+    // 遍历所有可能的 EquiX 解
     for sol in solutions.iter() {
         let bytes = sol.to_bytes();
+        
+        // 计算解的哈希
         let hash = blake3_hash(&bytes);
         let hash: [u8; 32] = *hash.as_bytes();
+        
+        // 检查哈希难度 (前导零)
         if leading_zero_bits(&hash) >= bits {
             return Ok(Some(bytes));
         }
     }
+    // 所有解都不满足难度要求
     Ok(None)
 }
 
+// 复用 types 模块中的 leading_zero_bits 逻辑
 fn leading_zero_bits(hash: &[u8; 32]) -> u32 {
     let mut count = 0u32;
     for byte in hash {
@@ -336,7 +462,7 @@ mod tests {
 
     #[test]
     fn solve_single_returns_none_when_no_solution_meets_bits() {
-        // Very high difficulty is unlikely to be met by any EquiX solution for this challenge.
+        // 测试：当难度极高时 (128 bits)，应该找不到解
         let challenge = [0u8; 32];
         let result = solve_single(challenge, 128).expect("solver should not error");
         assert!(result.is_none());
@@ -344,8 +470,11 @@ mod tests {
 
     #[test]
     fn worker_skips_challenges_without_solutions() {
+        // 测试：Worker 能够正确处理“无解”的情况并继续尝试下一个
         let progress = Arc::new(AtomicU64::new(0));
         let attempts = Arc::new(AtomicUsize::new(0));
+        
+        // 模拟求解器：前两次尝试返回无解，第三次返回解
         let solver: Arc<Solver> = {
             let attempts = attempts.clone();
             Arc::new(move |_challenge: [u8; 32], _bits: u32| {
@@ -362,6 +491,7 @@ mod tests {
             .expect("solver should complete");
 
         assert_eq!(proofs.len(), 3);
+        // 验证确实尝试了足够的次数
         assert!(
             attempts.load(Ordering::SeqCst) >= 2,
             "should have skipped at least two attempts"
@@ -371,6 +501,7 @@ mod tests {
 
     #[test]
     fn solve_bundle_is_deterministic_single_thread() {
+        // 测试：单线程下的结果必须是确定性的 (每次运行结果一样)
         let master = [11u8; 32];
 
         let progress1 = Arc::new(AtomicU64::new(0));
@@ -402,10 +533,11 @@ mod tests {
 
     #[test]
     fn resume_starts_from_next_nonce() {
+        // 测试：resume 功能是否正确地从已有的最大 ID 继续
         let progress = Arc::new(AtomicU64::new(0));
         let master = [7u8; 32];
 
-        // Build an existing bundle with a non-zero starting nonce (5).
+        // 构造一个已有的包，起始 nonce 为 5
         let existing_proofs =
             solve_range(master, 1, 1, 5, 0, 1, progress.clone()).expect("seed bundle");
 
@@ -415,7 +547,7 @@ mod tests {
             master_challenge: master,
         };
 
-        // Resume should not re-use nonce 5; expect ids 5 and >=6 after resume.
+        // Resume 应该从 5 之后开始，不应重复 5
         let mut engine = EquixEngineBuilder::default()
             .bits(1)
             .threads(1)
@@ -433,6 +565,7 @@ mod tests {
 
     #[test]
     fn single_and_multi_thread_solutions_are_equivalent() {
+        // 测试：多线程和单线程产生的结果在验证上是等效的（虽然顺序可能不同，但在 ProofBundle 里是排序的）
         let master = [21u8; 32];
         let required = 3usize;
 
@@ -476,6 +609,7 @@ mod tests {
 
     #[test]
     fn resume_extends_bundle_n_to_n_plus_m() {
+        // 测试：从 N 个扩展到 N+M 个证明
         let master = [31u8; 32];
         let progress = Arc::new(AtomicU64::new(0));
         let mut engine = EquixEngineBuilder::default()
@@ -506,6 +640,7 @@ mod tests {
 
     #[test]
     fn resume_rejects_mismatched_bits() {
+        // 测试：如果难度配置不匹配，Resume 应该报错
         let progress = Arc::new(AtomicU64::new(0));
         let mut engine_high = EquixEngineBuilder::default()
             .bits(2)
@@ -519,7 +654,7 @@ mod tests {
             .solve_bundle([9u8; 32])
             .expect("solve initial bundle");
 
-        // Lower bits engine should refuse to resume a higher-difficulty bundle.
+        // 使用低难度配置尝试 resume 高难度的包 -> 拒绝
         let mut engine_low = EquixEngineBuilder::default()
             .bits(1)
             .threads(1)
