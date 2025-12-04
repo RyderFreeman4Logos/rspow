@@ -16,8 +16,9 @@
   - [x] Define `ReplayCache` trait and provide an in-memory TTL implementation (using moka or lightweight map) for replay protection.
   - [x] Provide `VerifierConfig` with runtime-update (async) support for `time_window`, `min_difficulty`, `min_required_proofs`.
   - [x] Add client-side helpers to build `master_challenge`, run EquiX, and package `{ts, client_nonce, ProofBundle}` into a submission struct.
-  - [x] Add server-side helper to verify the submission struct end-to-end (time window, replay cache, deterministic nonce via provider, master challenge check, `verify_strict`).
-  - [x] Keep deterministic nonce un-cached by default; document that PRF is cheap and caching is optional via custom provider.
-  - [x] Ensure docs/examples reflect the helper APIs; no HTTP server included.
-  - [x] Add unit tests for near-stateless helpers (time window, replay, config updates, challenge matching).
+- [x] Add server-side helper to verify the submission struct end-to-end (time window, replay cache, deterministic nonce via provider, master challenge check, `verify_strict`).
+- [x] Keep deterministic nonce un-cached by default; document that PRF is cheap and caching is optional via custom provider.
+- [x] Ensure docs/examples reflect the helper APIs; no HTTP server included.
+- [x] Add unit tests for near-stateless helpers (time window, replay, config updates, challenge matching).
 - [x] Near-stateless verifier boundary: accept timestamps exactly at `now - time_window` per docs; adjust condition and add regression test.
+- [x] Near-stateless replay cache: make `insert_if_absent` atomic to prevent concurrent duplicate acceptance.
