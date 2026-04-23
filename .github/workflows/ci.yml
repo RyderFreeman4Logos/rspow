@@ -30,3 +30,31 @@ jobs:
       - name: Run CI script (fmt, clippy, tests)
         run: ./scripts/ci.sh
 
+  wasm32-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-all-crates: true
+
+      - name: Check wasm32 baseline (no features)
+        run: cargo check --target wasm32-unknown-unknown --no-default-features
+
+      - name: Check wasm32 EquiX support
+        if: ${{ always() }}
+        run: cargo check --target wasm32-unknown-unknown --no-default-features --features equix
+
+      - name: Check wasm32 near-stateless support
+        if: ${{ always() }}
+        run: cargo check --target wasm32-unknown-unknown --no-default-features --features near-stateless

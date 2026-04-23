@@ -1,6 +1,6 @@
 # rspow
 
-> A proof-of-work toolbox for Rust with optional backends and a near-stateless protocol helper. **Enable `features = ["equix"]` to use the EquiX solver.**
+> A proof-of-work toolbox for Rust with optional backends and a near-stateless protocol helper. **Enable `features = ["equix"]` to use the EquiX solver.** `wasm32-unknown-unknown` builds are supported on a best-effort basis; expect browser/wasm EquiX solving to be roughly 10-100x slower than native.
 
 ## 0.5.0 at a glance (breaking)
 
@@ -16,11 +16,28 @@
 | `equix`          |   ❌    | EquiX engine, proofs, bundles, tests                    |
 | `near-stateless` |   ❌    | Near-stateless server/client helpers (depends on equix) |
 
+## Supported targets
+
+| Target | Status | Notes |
+|--------|--------|-------|
+| `x86_64-unknown-linux-gnu` | Supported | Primary CI target. `./scripts/ci.sh` runs fmt, clippy, and `cargo test --all-features`. |
+| `wasm32-unknown-unknown` | Best-effort build support | CI runs build-only `cargo check` coverage for selected feature sets. Useful for browser clients, but expect EquiX solving to be 10-100x slower than native. |
+
+Other native `std` targets are likely to behave similarly, but that is an inference from the current code and dependencies rather than a CI-guaranteed target today.
+
+## Feature x target compatibility
+
+| Feature set | `x86_64-unknown-linux-gnu` | `wasm32-unknown-unknown` | Notes |
+|-------------|-----------------------------|---------------------------|-------|
+| `--no-default-features` | ✅ | ✅ | Baseline crate build passes on wasm32. |
+| `equix` | ✅ | ✅ | `cargo check --target wasm32-unknown-unknown --no-default-features --features equix` passes today. Best suited to verification or light workloads in wasm because solving is much slower than native. |
+| `near-stateless` | ✅ | ❌ | Native CI covers it via `--all-features`. On wasm32 it currently fails through `moka → uuid`; current verified snapshot (first compiler error): `error: to use 'uuid' on 'wasm32-unknown-unknown', specify a source of randomness using one of the 'js', 'rng-getrandom', or 'rng-rand' features` (`uuid/src/rng.rs`). |
+
 Add the crate with the features you need:
 
 ```toml
-rspow = { version = "0.4", features = ["equix"] }
-# rspow = { version = "0.4", features = ["equix", "near-stateless"] }
+rspow = { version = "0.5", features = ["equix"] }
+# rspow = { version = "0.5", features = ["equix", "near-stateless"] }
 ```
 
 ## Why bundles instead of “more bits”?
