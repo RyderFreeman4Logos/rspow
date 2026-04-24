@@ -49,10 +49,13 @@ pub mod error;
 pub mod pow;
 
 /// Low-level challenge derivation utilities.
+#[doc(hidden)]
 pub mod core;
 /// Concurrency primitives for multi-threaded solvers.
+#[doc(hidden)]
 pub mod stream;
 /// Convenience type aliases used across the crate.
+#[doc(hidden)]
 pub mod types;
 
 /// EquiX proof-of-work backend (requires feature `equix`).
