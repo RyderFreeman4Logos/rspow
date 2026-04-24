@@ -2,10 +2,19 @@
 
 design_docs/
 AGENTS.md
-wasm-demo/pkg/
-wasm-demo/node_modules/
-wasm-demo/target/
 .aider*
 *.swp
 *.zh.md
 .cargo-local/
+
+# AI/agent config layer (per ~/.gitignore_noai)
+weave.lock
+drafts/
+.csa/
+.codex/
+.gemini/
+.claude/
+.agents/
+GEMINI.md
+CLAUDE.md
+patterns/
