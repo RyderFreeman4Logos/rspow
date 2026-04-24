@@ -15,7 +15,7 @@ documentation = "https://docs.rs/rspow"
 
 [features]
 default = []
-equix = ["dep:equix"]
+equix = ["dep:equix", "dep:postcard"]
 near-stateless = ["equix", "dep:moka", "dep:left-right"]
 
 [dev-dependencies]
@@ -32,6 +32,7 @@ serde = { version = "1.0.201", features = ["derive"] }
 blake3 = "1.5.4"
 derive_builder = "0.20"
 thiserror = "2.0.17"
+postcard = { version = "1", optional = true, default-features = false, features = ["alloc"] }
 moka = { version = "0.12.8", optional = true, features = ["sync"] }
 left-right = { version = "0.11", optional = true }
 [target.'cfg(target_arch = "wasm32")'.dependencies]

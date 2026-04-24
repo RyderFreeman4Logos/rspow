@@ -67,7 +67,10 @@ pub mod equix;
 pub mod near_stateless;
 
 #[cfg(feature = "equix")]
-pub use crate::equix::{EquixEngine, EquixEngineBuilder, Proof, ProofBundle, ProofConfig};
+pub use crate::equix::{
+    BoundedDeserError, EquixEngine, EquixEngineBuilder, Proof, ProofBundle, ProofBundleLimits,
+    ProofConfig,
+};
 pub use crate::error::{Error, VerifyError};
 #[cfg(feature = "near-stateless")]
 pub use crate::near_stateless::*;
