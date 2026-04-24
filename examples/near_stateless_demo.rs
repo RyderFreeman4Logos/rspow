@@ -61,7 +61,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 other => panic!("unexpected response: {other:?}"),
             };
 
-            let client_nonce = blake3::hash(b"client-nonce-demo").into();
+            // A random client nonce per submission is required by the security model —
+            // reusing a nonce enables replay attacks.
+            let mut client_nonce = [0u8; 32];
+            getrandom::fill(&mut client_nonce).expect("getrandom failed");
             // Build engine matching server policy (helper applies sensible defaults).
             let mut engine = build_engine_from_params(&params)?;
             let progress = engine.progress.clone();

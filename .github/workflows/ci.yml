@@ -87,6 +87,21 @@ jobs:
         if: ${{ always() }}
         run: cargo check --target wasm32-unknown-unknown --no-default-features --features equix
 
-      - name: Check wasm32 near-stateless support
+      - name: Confirm wasm32 near-stateless unsupported status
         if: ${{ always() }}
-        run: cargo check --target wasm32-unknown-unknown --no-default-features --features near-stateless
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          output="$(cargo check --target wasm32-unknown-unknown --no-default-features --features near-stateless 2>&1)"
+          check_status=$?
+          set -e
+          printf '%s\n' "$output"
+          if [ "$check_status" -eq 0 ]; then
+            echo "::error::wasm32 near-stateless unexpectedly passed; update README support matrix and CI expectations"
+            exit 1
+          fi
+          if ! printf '%s\n' "$output" | grep -Fq "to use \`uuid\` on \`wasm32-unknown-unknown\`"; then
+            echo "::error::wasm32 near-stateless failed for an unexpected reason"
+            exit 1
+          fi
