@@ -43,7 +43,7 @@ fn main() {
             .progress(progress)
             .build_validated()
             .expect("valid config");
-        let master = [(0xA0 + i as u8); 32];
+        let master = [0xA0u8.wrapping_add(i as u8); 32];
         let _ = engine.solve_bundle(master).expect("warmup solve");
     }
 
