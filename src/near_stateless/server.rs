@@ -8,7 +8,7 @@ use crate::near_stateless::{cache::ReplayCacheError, client::derive_master_chall
 use left_right::{Absorb, ReadHandle, WriteHandle};
 use std::sync::{Arc, Mutex};
 
-/// Errors produced by [`NearStatelessVerifier::verify_submission`].
+/// Errors produced by [`NearStatelessVerifier`] operations.
 #[derive(Debug, thiserror::Error)]
 pub enum NsError {
     /// The submission timestamp is older than the configured time window.
@@ -32,6 +32,9 @@ pub enum NsError {
     /// The replay cache backend returned an error.
     #[error("replay cache error: {0}")]
     Cache(#[from] ReplayCacheError),
+    /// The internal left-right config read handle was unexpectedly closed.
+    #[error("config read handle closed")]
+    ConfigReadHandleClosed,
 }
 
 /// Update messages for left-right config.
@@ -123,28 +126,37 @@ where
     }
 
     /// Update verifier configuration at runtime.
+    ///
+    /// The `config_w` mutex is only locked briefly during config publish;
+    /// poisoning is recoverable, so we transparently use the inner state
+    /// via `unwrap_or_else(|e| e.into_inner())` poison recovery.
     pub fn set_config(&self, new_config: VerifierConfig) -> Result<(), Error> {
         new_config.validate()?;
-        let mut wh = self.config_w.lock().expect("config writer poisoned");
+        let mut wh = self.config_w.lock().unwrap_or_else(|e| e.into_inner());
         wh.append(ConfigUpdate::Set(new_config));
         wh.publish();
         Ok(())
     }
 
     /// Create parameters to send to a client: timestamp, deterministic nonce, and current config.
-    pub fn issue_params(&self) -> SolveParams {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NsError::ConfigReadHandleClosed`] if the internal config
+    /// read handle has been dropped (should not happen during normal operation).
+    pub fn issue_params(&self) -> Result<SolveParams, NsError> {
         let ts = self.time_provider.now_seconds();
         let det = self.nonce_provider.derive(self.server_secret, ts);
         let cfg = self
             .config_r
             .enter()
             .map(|g| g.clone())
-            .expect("config read handle closed");
-        SolveParams {
+            .ok_or(NsError::ConfigReadHandleClosed)?;
+        Ok(SolveParams {
             timestamp: ts,
             deterministic_nonce: det,
             config: cfg,
-        }
+        })
     }
 
     /// Verify a submission against server policy using the provided secret.
@@ -153,7 +165,7 @@ where
             .config_r
             .enter()
             .map(|g| g.clone())
-            .expect("config read handle closed");
+            .ok_or(NsError::ConfigReadHandleClosed)?;
 
         let now = self.time_provider.now_seconds();
         let ts = submission.timestamp;
@@ -492,7 +504,9 @@ mod tests {
             MapReplayCache::default(),
         );
 
-        let params = verifier.issue_params();
+        let params = verifier
+            .issue_params()
+            .expect("issue_params should succeed");
         assert_eq!(params.config, cfg);
         assert_eq!(params.timestamp, 1_000);
 
@@ -506,5 +520,79 @@ mod tests {
         verifier
             .verify_submission(&submission)
             .expect("round-trip verify");
+    }
+
+    #[test]
+    fn ns_error_config_read_handle_closed_display() {
+        let e = NsError::ConfigReadHandleClosed;
+        assert_eq!(e.to_string(), "config read handle closed");
+    }
+
+    #[test]
+    fn set_config_rejects_time_window_too_small() {
+        let verifier = verifier_with(
+            VerifierConfig::default(),
+            FixedTimeProvider { now: 100 },
+            MapReplayCache::default(),
+        );
+        let bad_cfg = VerifierConfig {
+            time_window: std::time::Duration::from_millis(500),
+            ..Default::default()
+        };
+        assert_eq!(
+            verifier.set_config(bad_cfg).unwrap_err(),
+            Error::TimeWindowTooSmall
+        );
+    }
+
+    #[test]
+    fn set_config_rejects_non_integral_seconds() {
+        let verifier = verifier_with(
+            VerifierConfig::default(),
+            FixedTimeProvider { now: 100 },
+            MapReplayCache::default(),
+        );
+        let bad_cfg = VerifierConfig {
+            time_window: std::time::Duration::from_millis(2_500),
+            ..Default::default()
+        };
+        assert_eq!(
+            verifier.set_config(bad_cfg).unwrap_err(),
+            Error::TimeWindowMustBeIntegralSeconds
+        );
+    }
+
+    #[test]
+    fn set_config_rejects_min_difficulty_zero() {
+        let verifier = verifier_with(
+            VerifierConfig::default(),
+            FixedTimeProvider { now: 100 },
+            MapReplayCache::default(),
+        );
+        let bad_cfg = VerifierConfig {
+            min_difficulty: 0,
+            ..Default::default()
+        };
+        assert_eq!(
+            verifier.set_config(bad_cfg).unwrap_err(),
+            Error::MinDifficultyMustBeNonZero
+        );
+    }
+
+    #[test]
+    fn set_config_rejects_min_required_proofs_zero() {
+        let verifier = verifier_with(
+            VerifierConfig::default(),
+            FixedTimeProvider { now: 100 },
+            MapReplayCache::default(),
+        );
+        let bad_cfg = VerifierConfig {
+            min_required_proofs: 0,
+            ..Default::default()
+        };
+        assert_eq!(
+            verifier.set_config(bad_cfg).unwrap_err(),
+            Error::MinRequiredProofsMustBeNonZero
+        );
     }
 }

@@ -41,13 +41,13 @@ type Solver = dyn Fn([u8; 32], u32) -> Result<Option<[u8; 16]>, Error> + Send + 
 impl EquixEngine {
     fn validate(&self) -> Result<(), Error> {
         if self.bits == 0 {
-            return Err(Error::InvalidConfig("bits must be > 0".into()));
+            return Err(Error::BitsMustBeNonZero);
         }
         if self.threads == 0 {
-            return Err(Error::InvalidConfig("threads must be >= 1".into()));
+            return Err(Error::ThreadsMustBeNonZero);
         }
         if self.required_proofs == 0 {
-            return Err(Error::InvalidConfig("required_proofs must be >= 1".into()));
+            return Err(Error::RequiredProofsMustBeNonZero);
         }
         Ok(())
     }
@@ -58,7 +58,7 @@ impl EquixEngine {
     /// that rely on the engine configuration rather than an ad-hoc parameter.
     pub fn set_required_proofs(&mut self, required_proofs: usize) -> Result<(), Error> {
         if required_proofs == 0 {
-            return Err(Error::InvalidConfig("required_proofs must be >= 1".into()));
+            return Err(Error::RequiredProofsMustBeNonZero);
         }
         self.required_proofs = required_proofs;
         Ok(())
@@ -67,7 +67,7 @@ impl EquixEngine {
     /// Update the number of threads used by the engine.
     pub fn set_threads(&mut self, threads: usize) -> Result<(), Error> {
         if threads == 0 {
-            return Err(Error::InvalidConfig("threads must be >= 1".into()));
+            return Err(Error::ThreadsMustBeNonZero);
         }
         self.threads = threads;
         Ok(())
@@ -77,16 +77,16 @@ impl EquixEngine {
 impl EquixEngineBuilder {
     fn validate(&self) -> Result<(), Error> {
         if self.bits.unwrap_or(0) == 0 {
-            return Err(Error::InvalidConfig("bits must be > 0".into()));
+            return Err(Error::BitsMustBeNonZero);
         }
         if self.threads.unwrap_or(0) == 0 {
-            return Err(Error::InvalidConfig("threads must be >= 1".into()));
+            return Err(Error::ThreadsMustBeNonZero);
         }
         if self.required_proofs.unwrap_or(0) == 0 {
-            return Err(Error::InvalidConfig("required_proofs must be >= 1".into()));
+            return Err(Error::RequiredProofsMustBeNonZero);
         }
         if self.progress.is_none() {
-            return Err(Error::InvalidConfig("progress must be provided".into()));
+            return Err(Error::ProgressMissing);
         }
         Ok(())
     }

@@ -6,6 +6,7 @@
 
 use std::error::Error;
 use std::io::Write;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -111,7 +112,7 @@ async fn server_task(
         Arc::new(MokaReplayCache::new(1000)),
         Arc::new(SystemTimeProvider),
     ) {
-        Ok(v) => Arc::new(v),
+        Ok(v) => Rc::new(v),
         Err(e) => {
             eprintln!("failed to create verifier: {e}");
             return;
@@ -121,7 +122,13 @@ async fn server_task(
     while let Some(req) = req_rx.recv().await {
         match req {
             Request::Params => {
-                let params = verifier.issue_params();
+                let params = match verifier.issue_params() {
+                    Ok(p) => p,
+                    Err(e) => {
+                        eprintln!("failed to issue params: {e}");
+                        break;
+                    }
+                };
                 if resp_tx.send(Response::Params(params)).await.is_err() {
                     break;
                 }
