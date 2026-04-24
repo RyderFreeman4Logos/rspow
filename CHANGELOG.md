@@ -26,9 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - CHANGELOG restructured to [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
   format (PR-H).
-- README wasm32 performance claim qualified as anecdotal (PR-H).
+- README wasm32 performance claim qualified as an unbenchmarked expectation (PR-H).
 - MSRV declared as 1.91; `rust-version` field added to `Cargo.toml` (PR-B).
 - wasm32-unknown-unknown CI lanes added for build-check coverage (PR-B).
+- Breaking: `NearStatelessVerifier::issue_params` now returns
+  `Result<SolveParams, NsError>` instead of `SolveParams` (PR-F, audit F006).
 
 ### Removed
 
@@ -40,11 +42,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Replay cache atomicity bug in near-stateless verifier (pre-batch).
 - Dead `wasm_pipeline.sh` script removed (PR-A).
-
-### Breaking
-
-- `NearStatelessVerifier::issue_params` now returns `Result<SolveParams, NsError>`
-  instead of `SolveParams` (PR-F, audit F006).
 
 ## [0.5.0] - 2025-12-03
 
