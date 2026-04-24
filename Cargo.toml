@@ -21,6 +21,7 @@ near-stateless = ["equix", "dep:moka", "dep:left-right"]
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 proptest = "1"
+getrandom = "0.3"
 
 [[example]]
 name = "near_stateless_demo"
@@ -36,6 +37,5 @@ thiserror = "2.0.17"
 postcard = { version = "1", optional = true, default-features = false, features = ["alloc"] }
 moka = { version = "0.12.8", optional = true, features = ["sync"] }
 left-right = { version = "0.11", optional = true }
-getrandom = "0.3"
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
