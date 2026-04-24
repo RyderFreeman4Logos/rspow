@@ -1,6 +1,6 @@
 # rspow
 
-> A proof-of-work toolbox for Rust with optional backends and a near-stateless protocol helper. **Enable `features = ["equix"]` to use the EquiX solver.** `wasm32-unknown-unknown` builds are supported on a best-effort basis; expect browser/wasm EquiX solving to be roughly 10-100x slower than native.
+> A proof-of-work toolbox for Rust with optional backends and a near-stateless protocol helper. **Enable `features = ["equix"]` to use the EquiX solver.** `wasm32-unknown-unknown` builds are supported on a best-effort basis; wasm32 EquiX solving performance is lower than native (no benchmark artifacts checked in yet).
 
 ## 0.5.0 at a glance (breaking)
 
@@ -21,7 +21,7 @@
 | Target | Status | Notes |
 |--------|--------|-------|
 | `x86_64-unknown-linux-gnu` | Supported | Primary CI target. `./scripts/ci.sh` runs fmt, clippy, and `cargo test --all-features`. |
-| `wasm32-unknown-unknown` | Best-effort build support | CI runs build-only `cargo check` coverage for selected feature sets. Useful for browser clients, but expect EquiX solving to be 10-100x slower than native. |
+| `wasm32-unknown-unknown` | Best-effort build support | CI runs build-only `cargo check` coverage for selected feature sets. Useful for browser clients, but EquiX solving is significantly slower than native (no benchmark artifacts checked in yet). |
 
 Other native `std` targets are likely to behave similarly, but that is an inference from the current code and dependencies rather than a CI-guaranteed target today.
 
