@@ -1,15 +1,23 @@
+// On wasm32 targets `std::thread::spawn` is unavailable, so `solve_range_with`
+// uses a single-threaded inline loop instead.  The native multi-threaded path
+// is preserved byte-for-byte behind `#[cfg(not(target_arch = "wasm32"))]`.
+
 use crate::core::derive_challenge;
 use crate::equix::types::{Proof, ProofBundle, ProofConfig};
 use crate::error::Error;
 use crate::pow::PowEngine;
-use crate::stream::{NonceSource, StopFlag};
+use crate::stream::NonceSource;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::stream::StopFlag;
 use blake3::hash as blake3_hash;
 use derive_builder::Builder;
 use equix as equix_crate;
+#[cfg(not(target_arch = "wasm32"))]
 use flume::{Receiver, Sender, TrySendError};
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
 use std::thread;
 
 /// Multi-threaded EquiX proof-of-work solver.
@@ -35,6 +43,7 @@ pub struct EquixEngine {
     pub progress: Arc<AtomicU64>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 type ProofResult = Result<Proof, Error>;
 type Solver = dyn Fn([u8; 32], u32) -> Result<Option<[u8; 16]>, Error> + Send + Sync;
 
@@ -206,6 +215,7 @@ fn solve_range(
     )
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn solve_range_with(
     master_challenge: [u8; 32],
@@ -288,6 +298,58 @@ fn solve_range_with(
     Ok(proofs)
 }
 
+/// Single-threaded wasm32 fallback — `threads` parameter is silently ignored.
+#[cfg(target_arch = "wasm32")]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn solve_range_with(
+    master_challenge: [u8; 32],
+    bits: u32,
+    _threads: usize, // ignored on wasm32 — always single-threaded
+    start_proof_id: u64,
+    current_len: usize,
+    target_total: usize,
+    progress: Arc<AtomicU64>,
+    solver: Arc<Solver>,
+) -> Result<Vec<Proof>, Error> {
+    if current_len > target_total {
+        return Err(Error::InvalidConfig(
+            "current proof count exceeds required proofs".into(),
+        ));
+    }
+
+    let needed = target_total.saturating_sub(current_len);
+    if needed == 0 {
+        return Ok(Vec::new());
+    }
+
+    let id_source = NonceSource::new(start_proof_id);
+    let mut proofs = Vec::with_capacity(needed);
+    let mut seen = HashSet::with_capacity(needed * 2 + 1);
+
+    while proofs.len() < needed {
+        let id = id_source.fetch();
+        let challenge = derive_challenge(master_challenge, id);
+        match solver(challenge, bits)? {
+            Some(solution) => {
+                if !seen.insert(id) {
+                    continue;
+                }
+                proofs.push(Proof {
+                    id,
+                    challenge,
+                    solution,
+                });
+                progress.fetch_add(1, Ordering::SeqCst);
+            }
+            None => continue,
+        }
+    }
+
+    proofs.sort_by_key(|p| p.id);
+    Ok(proofs)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn worker_loop(
     master_challenge: [u8; 32],
     bits: u32,
@@ -329,6 +391,7 @@ fn worker_loop(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn join_handles(joins: Vec<thread::JoinHandle<()>>) {
     for handle in joins {
         let _ = handle.join();
