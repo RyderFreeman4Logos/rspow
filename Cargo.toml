@@ -5,11 +5,13 @@ authors = ["Zola Gonano <zolagonano@protonmail.com>", "Ryder Freeman <RyderFreem
 description = "A multi-algorithm proof-of-work library in rust"
 homepage = "https://github.com/RyderFreeman4Logos/rspow"
 repository = "https://github.com/RyderFreeman4Logos/rspow"
-keywords = ["pow"]
-categories = ["command-line-utilities"]
+keywords = ["pow", "proof-of-work", "equix", "argon2", "anti-dos"]
+categories = ["cryptography", "authentication"]
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 edition = "2021"
+rust-version = "1.91"
+documentation = "https://docs.rs/rspow"
 
 [features]
 default = []
