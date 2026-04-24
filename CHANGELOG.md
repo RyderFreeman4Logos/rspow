@@ -20,14 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 12 integration tests and `proptest` dev-dependency for property-based testing
   (PR-G, audit F007).
 - Rustdoc on every public item and `#![deny(missing_docs)]` (PR-C).
-- Random `client_nonce` generation in the `near_stateless_demo` example (PR-H).
+- Random `client_nonce` generation in the `near_stateless_demo` example (PR-H, audit F009).
 
 ### Changed
 
 - CHANGELOG restructured to [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
   format (PR-H).
 - README wasm32 performance claim qualified as anecdotal (PR-H).
-- MSRV declared as 1.91.1; `rust-version` field added to `Cargo.toml` (PR-B).
+- MSRV declared as 1.91; `rust-version` field added to `Cargo.toml` (PR-B).
 - wasm32-unknown-unknown CI lanes added for build-check coverage (PR-B).
 
 ### Removed
