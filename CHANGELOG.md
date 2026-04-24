@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `#[doc(hidden)]` on internal helper modules to reduce public API surface (#8).
 - `ProofBundle::deserialize_bounded`, `ProofBundleLimits`, and `BoundedDeserError`
   for safe deserialization with caller-defined size limits (#9, audit F008).
-- 8 new `Error` variants, 3 `SubmissionBuilderError` variants, and
+- 8 new `Error` variants, 4 `SubmissionBuilderError` variants, and
   `NsError::ConfigReadHandleClosed` for structured error handling without panics
   (#10, audit F006).
 - 12 integration tests and `proptest` dev-dependency for property-based testing

@@ -36,8 +36,8 @@ Other native `std` targets are likely to behave similarly, but that is an infere
 Add the crate with the features you need:
 
 ```toml
-rspow = { version = "0.5", features = ["equix"] }
-# rspow = { version = "0.5", features = ["equix", "near-stateless"] }
+rspow = { version = "0.6", features = ["equix"] }
+# rspow = { version = "0.6", features = ["equix", "near-stateless"] }
 ```
 
 ## Why bundles instead of “more bits”?
