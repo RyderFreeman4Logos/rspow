@@ -30,6 +30,33 @@ jobs:
       - name: Run CI script (fmt, clippy, tests)
         run: ./scripts/ci.sh
 
+  feature-lanes:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: no-default-features
+            cargo_args: "--no-default-features"
+          - name: equix-only
+            cargo_args: "--no-default-features --features equix"
+          - name: equix-near-stateless
+            cargo_args: "--no-default-features --features equix,near-stateless"
+    name: test (${{ matrix.name }})
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-all-crates: true
+
+      - name: "Test: ${{ matrix.name }}"
+        run: cargo test ${{ matrix.cargo_args }}
+
   wasm32-check:
     runs-on: ubuntu-latest
     permissions:
