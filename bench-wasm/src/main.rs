@@ -1,5 +1,8 @@
 //! Timed benchmark of `EquixEngine::solve_bundle`.
 //!
+//! Separated into its own crate so that `rspow` dev-deps (proptest, etc.)
+//! are not pulled in, allowing `cargo build --target wasm32-wasip1` to work.
+//!
 //! Env vars (all optional):
 //!   BITS=7 THREADS=3 REQUIRED=30 SAMPLES=30 WARMUP=1
 //!

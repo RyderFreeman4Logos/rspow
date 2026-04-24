@@ -1,6 +1,6 @@
 # rspow
 
-> A proof-of-work toolbox for Rust with optional backends and a near-stateless protocol helper. **Enable `features = ["equix"]` to use the EquiX solver.** `wasm32-unknown-unknown` builds are supported on a best-effort basis; wasm32 EquiX solving is expected to be slower than native, but no benchmark artifacts are checked in yet.
+> A proof-of-work toolbox for Rust with optional backends and a near-stateless protocol helper. **Enable `features = ["equix"]` to use the EquiX solver.** `wasm32-unknown-unknown` builds are supported on a best-effort basis; wasm32 EquiX solving is expected to be slower than native; see the `bench-wasm/` sub-crate for a timing harness.
 
 ## 0.5.0 at a glance (breaking)
 
@@ -21,7 +21,7 @@
 | Target | Status | Notes |
 |--------|--------|-------|
 | `x86_64-unknown-linux-gnu` | Supported | Primary CI target. `./scripts/ci.sh` runs fmt, clippy, and `cargo test --all-features`. |
-| `wasm32-unknown-unknown` | Best-effort build support | CI runs build-only `cargo check` coverage for selected feature sets. Useful for browser clients, but wasm32 EquiX solving is expected to be slower than native, with no benchmark artifacts checked in yet. |
+| `wasm32-unknown-unknown` | Best-effort build support | CI runs build-only `cargo check` coverage for selected feature sets. Useful for browser clients; see `bench-wasm/` for a timing harness that also builds under `wasm32-wasip1`. |
 
 Other native `std` targets are likely to behave similarly, but that is an inference from the current code and dependencies rather than a CI-guaranteed target today.
 
@@ -91,6 +91,18 @@ Run the async end-to-end demo (requires `--features "equix near-stateless"`):
 
 ```bash
 cargo run --example near_stateless_demo --features "equix near-stateless"
+```
+
+## Benchmarks
+
+`bench-wasm/` contains a standalone timing harness for `EquixEngine::solve_bundle` that compiles on both native and `wasm32-wasip1` (avoids the dev-dep chain that blocks wasm builds of the main crate).
+
+```bash
+# Native
+BITS=7 THREADS=3 REQUIRED=30 SAMPLES=5 WARMUP=1 cargo run --release -p rspow-bench-wasm
+
+# Wasm (requires wasmtime)
+./scripts/bench-wasm.sh   # env vars: BITS, THREADS, REQUIRED, SAMPLES, WARMUP
 ```
 
 ## Testing & linting
