@@ -193,7 +193,19 @@ impl PowEngine for EquixEngine {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Bundled parameters for [`solve_range_with`], replacing positional args to
+/// satisfy `clippy::too_many_arguments` without `#[allow]`.
+struct SolveRangeArgs {
+    master_challenge: [u8; 32],
+    bits: u32,
+    threads: usize,
+    start_proof_id: u64,
+    current_len: usize,
+    target_total: usize,
+    progress: Arc<AtomicU64>,
+    solver: Arc<Solver>,
+}
+
 fn solve_range(
     master_challenge: [u8; 32],
     bits: u32,
@@ -203,7 +215,7 @@ fn solve_range(
     target_total: usize,
     progress: Arc<AtomicU64>,
 ) -> Result<Vec<Proof>, Error> {
-    solve_range_with(
+    solve_range_with(SolveRangeArgs {
         master_challenge,
         bits,
         threads,
@@ -211,22 +223,23 @@ fn solve_range(
         current_len,
         target_total,
         progress,
-        Arc::new(solve_single as fn([u8; 32], u32) -> Result<Option<[u8; 16]>, Error>),
-    )
+        solver: Arc::new(solve_single as fn([u8; 32], u32) -> Result<Option<[u8; 16]>, Error>),
+    })
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
-fn solve_range_with(
-    master_challenge: [u8; 32],
-    bits: u32,
-    threads: usize,
-    start_proof_id: u64,
-    current_len: usize,
-    target_total: usize,
-    progress: Arc<AtomicU64>,
-    solver: Arc<Solver>,
-) -> Result<Vec<Proof>, Error> {
+fn solve_range_with(args: SolveRangeArgs) -> Result<Vec<Proof>, Error> {
+    let SolveRangeArgs {
+        master_challenge,
+        bits,
+        threads,
+        start_proof_id,
+        current_len,
+        target_total,
+        progress,
+        solver,
+    } = args;
+
     if current_len > target_total {
         return Err(Error::InvalidConfig(
             "current proof count exceeds required proofs".into(),
@@ -298,19 +311,23 @@ fn solve_range_with(
     Ok(proofs)
 }
 
-/// Single-threaded wasm32 fallback — `threads` parameter is silently ignored.
+/// Single-threaded wasm32 fallback — `threads` field is silently ignored.
 #[cfg(target_arch = "wasm32")]
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
-fn solve_range_with(
-    master_challenge: [u8; 32],
-    bits: u32,
-    _threads: usize, // ignored on wasm32 — always single-threaded
-    start_proof_id: u64,
-    current_len: usize,
-    target_total: usize,
-    progress: Arc<AtomicU64>,
-    solver: Arc<Solver>,
-) -> Result<Vec<Proof>, Error> {
+fn solve_range_with(args: SolveRangeArgs) -> Result<Vec<Proof>, Error> {
+    let SolveRangeArgs {
+        master_challenge,
+        bits,
+        threads,
+        start_proof_id,
+        current_len,
+        target_total,
+        progress,
+        solver,
+    } = args;
+    // wasm32 is always single-threaded; suppress dead-code warning by reading
+    // the field once so the shared struct compiles on both targets.
+    let _ = threads;
+
     if current_len > target_total {
         return Err(Error::InvalidConfig(
             "current proof count exceeds required proofs".into(),
@@ -463,8 +480,17 @@ mod tests {
             })
         };
 
-        let proofs = solve_range_with([1u8; 32], 0, 2, 0, 0, 3, progress.clone(), solver)
-            .expect("solver should complete");
+        let proofs = solve_range_with(SolveRangeArgs {
+            master_challenge: [1u8; 32],
+            bits: 0,
+            threads: 2,
+            start_proof_id: 0,
+            current_len: 0,
+            target_total: 3,
+            progress: progress.clone(),
+            solver,
+        })
+        .expect("solver should complete");
 
         assert_eq!(proofs.len(), 3);
         assert!(
