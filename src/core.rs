@@ -1,5 +1,9 @@
 use blake3::Hasher as Blake3Hasher;
 
+/// Derive a per-proof challenge from a master challenge and proof id.
+///
+/// Uses BLAKE3 with domain tag `"rspow:challenge:v1|"` to produce a unique
+/// 32-byte challenge for each `(master_challenge, proof_id)` pair.
 pub fn derive_challenge(master_challenge: [u8; 32], proof_id: u64) -> [u8; 32] {
     let mut hasher = Blake3Hasher::new();
     hasher.update(b"rspow:challenge:v1|");

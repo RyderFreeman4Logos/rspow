@@ -12,15 +12,25 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 
+/// Multi-threaded EquiX proof-of-work solver.
+///
+/// Use [`EquixEngineBuilder`] to construct an engine with validated
+/// parameters, then call [`PowEngine::solve_bundle`] or
+/// [`PowEngine::resume`].
 #[derive(Builder, Clone, Debug)]
 #[builder(pattern = "owned")]
+#[builder_struct_attr(doc = "Builder for [`EquixEngine`] with owned-setter pattern.")]
 pub struct EquixEngine {
+    /// Required number of leading zero bits (difficulty target).
     #[builder(default = "7")]
     pub bits: u32,
+    /// Number of worker threads to use for solving.
     #[builder(default = "3")]
     pub threads: usize,
+    /// Number of proofs the engine must collect per bundle.
     #[builder(default = "30")]
     pub required_proofs: usize,
+    /// Shared counter updated each time a proof is found.
     #[builder(default = "Arc::new(AtomicU64::new(0))")]
     pub progress: Arc<AtomicU64>,
 }
@@ -81,6 +91,15 @@ impl EquixEngineBuilder {
         Ok(())
     }
 
+    /// Validate all fields and build the engine.
+    ///
+    /// Prefer this over the generated `build()` method because it returns
+    /// [`Error`] instead of a builder-specific error type.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidConfig`] if any field is zero or if `progress`
+    /// is missing.
     pub fn build_validated(self) -> Result<EquixEngine, Error> {
         self.validate()?;
         self.build()

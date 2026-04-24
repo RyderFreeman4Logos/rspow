@@ -3,6 +3,7 @@ use moka::sync::Cache;
 /// Error type for replay cache operations.
 #[derive(Debug, thiserror::Error)]
 pub enum ReplayCacheError {
+    /// A backend-specific error occurred.
     #[error("replay cache operation failed: {0}")]
     Other(String),
 }
@@ -26,6 +27,7 @@ pub struct MokaReplayCache {
 }
 
 impl MokaReplayCache {
+    /// Create a new cache that retains at most `max_capacity` entries.
     pub fn new(max_capacity: u64) -> Self {
         Self {
             inner: Cache::builder().max_capacity(max_capacity).build(),

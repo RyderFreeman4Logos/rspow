@@ -8,20 +8,28 @@ use crate::near_stateless::{cache::ReplayCacheError, client::derive_master_chall
 use left_right::{Absorb, ReadHandle, WriteHandle};
 use std::sync::{Arc, Mutex};
 
+/// Errors produced by [`NearStatelessVerifier::verify_submission`].
 #[derive(Debug, thiserror::Error)]
 pub enum NsError {
+    /// The submission timestamp is older than the configured time window.
     #[error("timestamp too old")]
     StaleTimestamp,
+    /// The submission timestamp is in the future relative to the server clock.
     #[error("timestamp is in the future")]
     FutureTimestamp,
+    /// The client nonce has already been accepted within the time window.
     #[error("replay detected")]
     Replay,
+    /// The proof bundle's master challenge does not match the server's derivation.
     #[error("master challenge mismatch")]
     MasterChallengeMismatch,
+    /// The proof bundle failed cryptographic verification.
     #[error("verification failed: {0}")]
     Verify(#[from] VerifyError),
+    /// The verifier configuration is invalid.
     #[error("invalid config: {0}")]
     InvalidConfig(String),
+    /// The replay cache backend returned an error.
     #[error("replay cache error: {0}")]
     Cache(#[from] ReplayCacheError),
 }
@@ -59,6 +67,40 @@ where
     C: ReplayCache + 'static,
     T: TimeProvider + 'static,
 {
+    /// Create a new verifier with the given configuration and dependencies.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidConfig`] if `config` fails validation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #[cfg(feature = "near-stateless")]
+    /// # {
+    /// use rspow::near_stateless::server::NearStatelessVerifier;
+    /// use rspow::near_stateless::prf::Blake3NonceProvider;
+    /// use rspow::near_stateless::cache::MokaReplayCache;
+    /// use rspow::near_stateless::time::SystemTimeProvider;
+    /// use rspow::near_stateless::types::VerifierConfig;
+    /// use std::sync::Arc;
+    /// use std::time::Duration;
+    ///
+    /// let config = VerifierConfig {
+    ///     time_window: Duration::from_secs(30),
+    ///     min_difficulty: 1,
+    ///     min_required_proofs: 1,
+    /// };
+    /// let verifier = NearStatelessVerifier::new(
+    ///     config,
+    ///     [0xAA; 32],
+    ///     Arc::new(Blake3NonceProvider),
+    ///     Arc::new(MokaReplayCache::new(10_000)),
+    ///     Arc::new(SystemTimeProvider),
+    /// )
+    /// .expect("valid config");
+    /// # }
+    /// ```
     pub fn new(
         config: VerifierConfig,
         server_secret: [u8; 32],

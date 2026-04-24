@@ -4,22 +4,60 @@ use crate::pow::{PowBundle, PowConfig, PowProof};
 use blake3::hash as blake3_hash;
 use equix as equix_crate;
 
+/// A single EquiX proof-of-work solution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Proof {
+    /// Nonce id used to derive the per-proof challenge.
     pub id: u64,
+    /// The 32-byte challenge derived from the master challenge and [`id`](Self::id).
     pub challenge: [u8; 32],
+    /// The 16-byte EquiX solution whose BLAKE3 hash meets the difficulty target.
     pub solution: [u8; 16],
 }
 
+/// Difficulty configuration for an EquiX proof bundle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ProofConfig {
+    /// Required number of leading zero bits in the BLAKE3 hash of each solution.
     pub bits: u32,
 }
 
+/// An ordered collection of [`Proof`]s sharing a common master challenge.
+///
+/// # Verification
+///
+/// Use [`verify_strict`](Self::verify_strict) to check that every proof is
+/// valid, unique, sorted, and that the bundle meets a minimum difficulty and
+/// proof count.
+///
+/// ```rust
+/// # #[cfg(feature = "equix")]
+/// # {
+/// use rspow::equix::{EquixEngineBuilder, ProofBundle};
+/// use rspow::pow::{PowBundle, PowEngine};
+/// use std::sync::atomic::AtomicU64;
+/// use std::sync::Arc;
+///
+/// let progress = Arc::new(AtomicU64::new(0));
+/// let mut engine = EquixEngineBuilder::default()
+///     .bits(1)
+///     .threads(1)
+///     .required_proofs(2)
+///     .progress(progress)
+///     .build_validated()
+///     .expect("valid config");
+///
+/// let bundle = engine.solve_bundle([42u8; 32]).expect("solve");
+/// bundle.verify_strict(1, 2).expect("bundle is valid");
+/// # }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ProofBundle {
+    /// The proofs in this bundle, sorted by [`Proof::id`].
     pub proofs: Vec<Proof>,
+    /// The difficulty configuration shared by all proofs.
     pub config: ProofConfig,
+    /// The master challenge from which per-proof challenges are derived.
     pub master_challenge: [u8; 32],
 }
 
@@ -65,14 +103,22 @@ impl PowBundle for ProofBundle {
 }
 
 impl ProofBundle {
+    /// Return the number of proofs in this bundle.
     pub fn len(&self) -> usize {
         self.proofs.len()
     }
 
+    /// Return `true` if the bundle contains no proofs.
     pub fn is_empty(&self) -> bool {
         self.proofs.is_empty()
     }
 
+    /// Insert a proof, maintaining sorted order by id.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VerifyError::DuplicateProof`] if a proof with the same id
+    /// already exists.
     pub fn insert_proof(&mut self, proof: Proof) -> Result<(), VerifyError> {
         if self.proofs.iter().any(|p| p.id == proof.id) {
             return Err(VerifyError::DuplicateProof);
@@ -82,6 +128,16 @@ impl ProofBundle {
         Ok(())
     }
 
+    /// Verify every proof in the bundle and enforce structural invariants.
+    ///
+    /// Checks that the bundle has at least `min_required_proofs` proofs, that
+    /// the configured difficulty is at least `min_difficulty`, that proofs are
+    /// sorted by id with no duplicates, and that each individual proof passes
+    /// EquiX and difficulty verification.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`VerifyError`] describing the first violation found.
     pub fn verify_strict(
         &self,
         min_difficulty: u32,
@@ -112,6 +168,17 @@ impl ProofBundle {
 }
 
 impl Proof {
+    /// Verify this proof against the given difficulty and master challenge.
+    ///
+    /// Checks that the challenge was correctly derived, that the BLAKE3 hash
+    /// of the solution has at least `bits` leading zero bits, and that the
+    /// EquiX puzzle is satisfied.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VerifyError::Malformed`] if the challenge or EquiX solution
+    /// is invalid, or [`VerifyError::InvalidDifficulty`] if the hash does not
+    /// meet the target.
     pub fn verify(&self, bits: u32, master_challenge: [u8; 32]) -> Result<(), VerifyError> {
         let expected_challenge = derive_challenge(master_challenge, self.id);
         if expected_challenge != self.challenge {
