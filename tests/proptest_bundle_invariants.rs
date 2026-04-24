@@ -1,63 +1,42 @@
 #![cfg(feature = "equix")]
 
 use proptest::prelude::*;
-use rspow::equix::{EquixEngineBuilder, Proof, ProofBundle, ProofConfig};
-use rspow::pow::PowEngine;
-use std::sync::atomic::AtomicU64;
-use std::sync::Arc;
+use rspow::equix::{Proof, ProofBundle, ProofConfig};
 
 proptest! {
-    // Fewer cases: each invocation solves an EquiX puzzle (~100ms).
-    #![proptest_config(ProptestConfig::with_cases(32))]
+    #![proptest_config(ProptestConfig::with_cases(256))]
 
     #[test]
     fn bundle_proofs_are_sorted_by_id(seeds in proptest::collection::vec(any::<u64>(), 1..=16)) {
-        // Build a ProofBundle by inserting proofs with random ids.
         // insert_proof maintains sorted order, so the result must be sorted.
+        // Uses dummy challenge/solution — insert_proof only checks duplicate ids
+        // and maintains sort order without verifying the PoW.
         let master = [0xAAu8; 32];
 
-        // Solve a small bundle to get a valid proof template (correct challenge + solution).
-        let progress = Arc::new(AtomicU64::new(0));
-        let mut engine = EquixEngineBuilder::default()
-            .bits(1_u32)
-            .threads(1_usize)
-            .required_proofs(1_usize)
-            .progress(progress)
-            .build_validated()
-            .expect("engine build");
-        let template_bundle = engine.solve_bundle(master).expect("solve");
-        let template_proof = template_bundle.proofs[0];
-
-        // Create an empty bundle and insert proofs with unique ids from seeds.
         let mut bundle = ProofBundle {
             proofs: Vec::new(),
             config: ProofConfig { bits: 1 },
             master_challenge: master,
         };
 
-        // Deduplicate seeds to avoid DuplicateProof errors.
         let mut seen = std::collections::HashSet::new();
         for &seed in &seeds {
             if !seen.insert(seed) {
                 continue;
             }
-            // Use the template proof's solution/challenge (won't pass verify_strict
-            // but insert_proof only checks duplicate ids and maintains sort order).
             let proof = Proof {
                 id: seed,
-                challenge: template_proof.challenge,
-                solution: template_proof.solution,
+                challenge: [0u8; 32],
+                solution: [0u8; 16],
             };
             bundle.insert_proof(proof).expect("insert should succeed for unique id");
         }
 
-        // Assert sorted order.
-        let ids: Vec<u64> = bundle.proofs.iter().map(|p| p.id).collect();
-        for window in ids.windows(2) {
+        prop_assert_eq!(bundle.proofs.len(), seen.len(), "bundle should contain all unique seeds");
+        for window in bundle.proofs.windows(2) {
             prop_assert!(
-                window[0] < window[1],
-                "proofs must be strictly sorted by id, got {:?}",
-                ids
+                window[0].id < window[1].id,
+                "proofs must be strictly sorted by id"
             );
         }
     }
@@ -66,36 +45,24 @@ proptest! {
     fn bundle_rejects_duplicate_ids(id in any::<u64>()) {
         let master = [0xBBu8; 32];
 
-        let progress = Arc::new(AtomicU64::new(0));
-        let mut engine = EquixEngineBuilder::default()
-            .bits(1_u32)
-            .threads(1_usize)
-            .required_proofs(1_usize)
-            .progress(progress)
-            .build_validated()
-            .expect("engine build");
-        let template_bundle = engine.solve_bundle(master).expect("solve");
-        let template_proof = template_bundle.proofs[0];
-
-        let proof = Proof {
-            id,
-            challenge: template_proof.challenge,
-            solution: template_proof.solution,
-        };
-
         let mut bundle = ProofBundle {
             proofs: Vec::new(),
             config: ProofConfig { bits: 1 },
             master_challenge: master,
         };
 
+        let proof = Proof {
+            id,
+            challenge: [0u8; 32],
+            solution: [0u8; 16],
+        };
+
         bundle.insert_proof(proof).expect("first insert should succeed");
 
-        // Second insert with same id must fail.
         let duplicate = Proof {
             id,
-            challenge: template_proof.challenge,
-            solution: template_proof.solution,
+            challenge: [0u8; 32],
+            solution: [0u8; 16],
         };
         let err = bundle
             .insert_proof(duplicate)
@@ -108,7 +75,7 @@ proptest! {
     }
 }
 
-// Test derive_master_challenge determinism via the near_stateless client module.
+// Test core::derive_challenge determinism.
 // Feature-gated on equix only (derive_master_challenge is in near_stateless,
 // but we can test the lower-level core::derive_challenge which is always available
 // and has the same determinism property).
