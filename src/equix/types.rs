@@ -270,7 +270,7 @@ impl ProofBundle {
         use std::io::Read as _;
         let mut buf = Vec::new();
         reader
-            .take(limits.max_bytes as u64 + 1)
+            .take((limits.max_bytes as u64).saturating_add(1))
             .read_to_end(&mut buf)?;
         if buf.len() > limits.max_bytes {
             return Err(BoundedDeserError::InputTooLarge {
