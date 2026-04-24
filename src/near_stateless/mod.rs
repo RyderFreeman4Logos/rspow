@@ -7,11 +7,17 @@
 //! - Server-side verifier helper that validates the full submission flow.
 //! - Client-side helpers to build master challenges and package submissions.
 
+/// Replay cache abstraction and default in-memory implementation.
 pub mod cache;
+/// Client-side helpers for challenge derivation and submission building.
 pub mod client;
+/// Deterministic nonce provider trait and BLAKE3 implementation.
 pub mod prf;
+/// Server-side verifier for near-stateless submissions.
 pub mod server;
+/// Time provider abstraction for testability.
 pub mod time;
+/// Shared data types ([`VerifierConfig`], [`Submission`], [`SolveParams`]).
 pub mod types;
 
 pub use crate::near_stateless::client::solve_submission_from_params;
