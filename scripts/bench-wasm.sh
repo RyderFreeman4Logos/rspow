@@ -14,6 +14,7 @@ THREADS="${THREADS:-1}"
 REQUIRED="${REQUIRED:-30}"
 SAMPLES="${SAMPLES:-30}"
 WARMUP="${WARMUP:-1}"
+export BITS THREADS REQUIRED SAMPLES WARMUP
 
 if [[ "${1:-}" == "--native" ]]; then
     exec cargo run --release -p rspow-bench-wasm
