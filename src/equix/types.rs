@@ -73,6 +73,11 @@ pub struct ProofBundleLimits {
     pub max_proofs: usize,
     /// Maximum difficulty bits value allowed (default: 64).
     pub max_bits: u32,
+    /// Maximum total input bytes to read before rejecting (default: 1 MiB).
+    ///
+    /// This caps the `read_to_end` call so that an attacker cannot force
+    /// unbounded memory allocation by supplying an extremely large stream.
+    pub max_bytes: usize,
 }
 
 impl Default for ProofBundleLimits {
@@ -80,6 +85,7 @@ impl Default for ProofBundleLimits {
         Self {
             max_proofs: 1024,
             max_bits: 64,
+            max_bytes: 1024 * 1024,
         }
     }
 }
@@ -102,6 +108,14 @@ pub enum BoundedDeserError {
         got: u32,
         /// Maximum allowed by [`ProofBundleLimits::max_bits`].
         max: u32,
+    },
+    /// The input exceeds the [`ProofBundleLimits::max_bytes`] limit.
+    #[error("input too large: read {got} bytes, max {max}")]
+    InputTooLarge {
+        /// Number of bytes read before the limit was hit.
+        got: usize,
+        /// Maximum allowed by [`ProofBundleLimits::max_bytes`].
+        max: usize,
     },
     /// The input bytes could not be decoded as a valid [`ProofBundle`].
     #[error("format error: {0}")]
@@ -204,19 +218,19 @@ impl ProofBundle {
     /// # Implementation note
     ///
     /// Postcard parses from a `&[u8]` slice in one pass, so the method reads
-    /// all bytes first, then deserializes, then checks limits.  Because
-    /// postcard's wire format stores `Vec` lengths as varints, the allocation
-    /// during deserialization is bounded by the input byte length (each
-    /// `Proof` is ~60 bytes on the wire), so a length-prefix pre-check would
-    /// add complexity without meaningful safety gain.
+    /// all bytes first (up to [`ProofBundleLimits::max_bytes`]), then
+    /// deserializes, then checks limits.  The byte cap prevents unbounded
+    /// memory allocation from an oversized input stream.
     ///
     /// # Errors
     ///
     /// Returns [`BoundedDeserError::Io`] on read failure,
-    /// [`BoundedDeserError::Format`] if postcard decoding fails,
-    /// [`BoundedDeserError::TooManyProofs`] if the proof count exceeds
-    /// `limits.max_proofs`, or [`BoundedDeserError::BitsExceeded`] if the
-    /// difficulty bits exceed `limits.max_bits`.
+    /// [`BoundedDeserError::InputTooLarge`] if the input exceeds
+    /// `limits.max_bytes`, [`BoundedDeserError::Format`] if postcard
+    /// decoding fails, [`BoundedDeserError::TooManyProofs`] if the proof
+    /// count exceeds `limits.max_proofs`, or
+    /// [`BoundedDeserError::BitsExceeded`] if the difficulty bits exceed
+    /// `limits.max_bits`.
     ///
     /// # Example
     ///
@@ -243,18 +257,27 @@ impl ProofBundle {
     /// let bytes = postcard::to_allocvec(&bundle).expect("serialize");
     ///
     /// // Deserialize with limits enforced.
-    /// let limits = ProofBundleLimits { max_proofs: 100, max_bits: 32 };
+    /// let limits = ProofBundleLimits { max_proofs: 100, max_bits: 32, ..Default::default() };
     /// let recovered = ProofBundle::deserialize_bounded(&bytes[..], &limits)
     ///     .expect("bounded deser");
     /// assert_eq!(bundle, recovered);
     /// # }
     /// ```
     pub fn deserialize_bounded<R: std::io::Read>(
-        mut reader: R,
+        reader: R,
         limits: &ProofBundleLimits,
     ) -> Result<Self, BoundedDeserError> {
+        use std::io::Read as _;
         let mut buf = Vec::new();
-        reader.read_to_end(&mut buf)?;
+        reader
+            .take(limits.max_bytes as u64 + 1)
+            .read_to_end(&mut buf)?;
+        if buf.len() > limits.max_bytes {
+            return Err(BoundedDeserError::InputTooLarge {
+                got: buf.len(),
+                max: limits.max_bytes,
+            });
+        }
 
         let candidate: Self =
             postcard::from_bytes(&buf).map_err(|e| BoundedDeserError::Format(e.to_string()))?;
@@ -434,11 +457,29 @@ mod tests {
         let limits = ProofBundleLimits {
             max_proofs: 2,
             max_bits: 64,
+            ..Default::default()
         };
         let err = ProofBundle::deserialize_bounded(&bytes[..], &limits)
             .expect_err("should reject too many proofs");
         assert!(
             matches!(err, BoundedDeserError::TooManyProofs { got: 3, max: 2 }),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn bounded_deser_rejects_oversized_input() {
+        // Create a payload larger than max_bytes.
+        let bundle = small_bundle(1, 2);
+        let bytes = postcard::to_allocvec(&bundle).expect("serialize");
+        let limits = ProofBundleLimits {
+            max_bytes: 1, // 1 byte max — any real payload will exceed this
+            ..Default::default()
+        };
+        let err = ProofBundle::deserialize_bounded(&bytes[..], &limits)
+            .expect_err("should reject oversized input");
+        assert!(
+            matches!(err, BoundedDeserError::InputTooLarge { .. }),
             "unexpected error: {err:?}",
         );
     }
