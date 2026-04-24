@@ -11,37 +11,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `#[doc(hidden)]` on internal helper modules to reduce public API surface (PR-D).
+- `#[doc(hidden)]` on internal helper modules to reduce public API surface (#8).
 - `ProofBundle::deserialize_bounded`, `ProofBundleLimits`, and `BoundedDeserError`
-  for safe deserialization with caller-defined size limits (PR-E, audit F008).
+  for safe deserialization with caller-defined size limits (#9, audit F008).
 - 8 new `Error` variants, 3 `SubmissionBuilderError` variants, and
   `NsError::ConfigReadHandleClosed` for structured error handling without panics
-  (PR-F, audit F006).
+  (#10, audit F006).
 - 12 integration tests and `proptest` dev-dependency for property-based testing
-  (PR-G, audit F007).
-- Rustdoc on every public item and `#![deny(missing_docs)]` (PR-C).
-- Random `client_nonce` generation in the `near_stateless_demo` example (PR-H, audit F009).
+  (#11, audit F007).
+- Rustdoc on every public item and `#![deny(missing_docs)]` (#7).
+- Random `client_nonce` generation in the `near_stateless_demo` example (#12, audit F009).
 
 ### Changed
 
 - CHANGELOG restructured to [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
-  format (PR-H).
-- README wasm32 performance claim qualified as an unbenchmarked expectation (PR-H).
-- MSRV declared as 1.91; `rust-version` field added to `Cargo.toml` (PR-B).
-- wasm32-unknown-unknown CI lanes added for build-check coverage (PR-B).
+  format (#12).
+- README wasm32 performance claim qualified as an unbenchmarked expectation (#12).
+- MSRV declared as 1.91; `rust-version` field added to `Cargo.toml` (#5).
+- wasm32-unknown-unknown CI lanes added for build-check coverage (#5).
 - Breaking: `NearStatelessVerifier::issue_params` now returns
-  `Result<SolveParams, NsError>` instead of `SolveParams` (PR-F, audit F006).
+  `Result<SolveParams, NsError>` instead of `SolveParams` (#10, audit F006).
 
 ### Removed
 
 - 5 unused direct dependencies: `argon2`, `hex`, `ripemd`, `scrypt`,
-  `serde_json` (PR-C.0).
-- Misleading `"argon2"` keyword from `Cargo.toml` (PR-C.0).
+  `serde_json` (#6).
+- Misleading `"argon2"` keyword from `Cargo.toml` (#6).
 
 ### Fixed
 
 - Replay cache atomicity bug in near-stateless verifier (pre-batch).
-- Dead `wasm_pipeline.sh` script removed (PR-A).
+- Dead `wasm_pipeline.sh` script removed (#4).
 
 ## [0.5.0] - 2025-12-03
 
