@@ -20,9 +20,10 @@ if [[ "${1:-}" == "--native" ]]; then
     exec cargo run --release -p rspow-bench-wasm
 fi
 
+TARGET_DIR="${CARGO_TARGET_DIR:-target}"
 cargo build --release --target wasm32-wasip1 -p rspow-bench-wasm
 
-WASM="target/wasm32-wasip1/release/rspow-bench-wasm.wasm"
+WASM="${TARGET_DIR}/wasm32-wasip1/release/rspow-bench-wasm.wasm"
 exec wasmtime \
     --env "BITS=$BITS" \
     --env "THREADS=$THREADS" \
