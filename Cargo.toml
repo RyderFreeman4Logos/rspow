@@ -5,7 +5,7 @@ authors = ["Zola Gonano <zolagonano@protonmail.com>", "Ryder Freeman <RyderFreem
 description = "A multi-algorithm proof-of-work library in rust"
 homepage = "https://github.com/RyderFreeman4Logos/rspow"
 repository = "https://github.com/RyderFreeman4Logos/rspow"
-keywords = ["pow", "proof-of-work", "equix", "argon2", "anti-dos"]
+keywords = ["pow", "proof-of-work", "equix", "anti-dos"]
 categories = ["cryptography", "authentication"]
 license = "MIT OR Apache-2.0"
 readme = "README.md"
@@ -26,14 +26,9 @@ name = "near_stateless_demo"
 required-features = ["equix", "near-stateless"]
 
 [dependencies]
-argon2 = "0.5.3"
 equix = { version = "0.5.0", optional = true }
 flume = "0.11"
-hex = "0.4.3"
-ripemd = "0.1.3"
-scrypt = "0.11.0"
 serde = { version = "1.0.201", features = ["derive"] }
-serde_json = "1.0.117"
 blake3 = "1.5.4"
 derive_builder = "0.20"
 thiserror = "2.0.17"
